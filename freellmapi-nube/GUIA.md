@@ -61,6 +61,7 @@ El script:
 1. instala Docker y Tailscale,
 2. te muestra un enlace para conectar el servidor a tu cuenta de Tailscale (ábrelo e inicia sesión),
 3. crea `~/freellmapi/.env` con una clave de cifrado nueva,
+   y activa los proveedores que funcionan **sin clave**,
 4. descarga y arranca FreeLLMAPI,
 5. lo publica con HTTPS dentro de tu red privada.
 
@@ -85,12 +86,18 @@ Al final verás algo como:
 Con Tailscale encendido en tu ordenador, abre la URL del panel.
 
 1. **Crea tu cuenta** (email + contraseña). Es solo local, en tu servidor.
-2. Página **Keys** → añade las claves de los proveedores gratuitos que quieras.
-   Buenos para empezar (todos tienen plan gratuito):
-   - Google AI Studio (Gemini) — <https://aistudio.google.com/apikey>
-   - Groq — <https://console.groq.com/keys>
-   - OpenRouter — <https://openrouter.ai/keys>
-   - Cerebras, Mistral, GitHub Models, NVIDIA NIM… (el panel lista los 87)
+2. **Proveedores:** no tienes que hacer nada. El script ya activó 3 proveedores
+   que funcionan **sin clave** (los verás en la página **Keys** como "sin clave"):
+
+   | Proveedor | Límite aproximado | Ojo |
+   |---|---|---|
+   | **Kilo Gateway** | 200 peticiones / hora | Guarda tus mensajes y los usa para entrenar modelos: no le mandes nada privado. |
+   | **OVH AI Endpoints** | ~2 peticiones / minuto por modelo | Muy limitado, sirve de respaldo. |
+   | **AI Horde** | Cola de voluntarios | Lento (hasta 2 min por respuesta), sin herramientas. |
+
+   Con `model: "auto"` el router usa el que esté disponible y salta al siguiente
+   cuando uno llega a su límite. Para probar y uso ligero va bien; para uso
+   diario intenso, mira [Más capacidad: añadir claves gratis](#más-capacidad-añadir-claves-gratis).
 3. **Fallback Chain** → ordena los modelos a tu gusto (o deja el orden automático).
 4. Arriba en la página **Keys** está tu **clave unificada** (`freellmapi-...`).
    Esa es la única clave que usarás en tus apps.
@@ -146,6 +153,21 @@ claude mcp add --transport http freellmapi https://mi-servidor.tail1234.ts.net/m
 > través de **Claude Code**.
 
 ---
+
+## Más capacidad: añadir claves gratis
+
+Cuando quieras más velocidad y límites, añade claves en **Keys → Add key**
+(todas gratuitas, la mayoría sin tarjeta). No hace falta reinstalar nada:
+
+- Google AI Studio (Gemini) — <https://aistudio.google.com/apikey>
+- Groq — <https://console.groq.com/keys>
+- OpenRouter — <https://openrouter.ai/keys>
+- Cerebras, Mistral, GitHub Models, NVIDIA NIM… (el panel lista todos)
+
+**Quitar un proveedor sin clave** (por ejemplo Kilo, por privacidad): edita
+`~/freellmapi/freellmapi.config.json`, borra su línea, y luego bórralo también en
+la página **Keys** del panel. Si solo lo borras del panel, vuelve a aparecer al
+reiniciar.
 
 ## Mantenimiento
 

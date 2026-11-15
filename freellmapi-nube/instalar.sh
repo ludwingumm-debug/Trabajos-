@@ -47,6 +47,21 @@ else
   echo ".env ya existe: se conserva tal cual."
 fi
 
+# Proveedores que funcionan SIN clave (se activan solos en cada arranque).
+# Para quitar uno, bórralo de este archivo y vuelve a ejecutar el script.
+if [ ! -f freellmapi.config.json ]; then
+  cat > freellmapi.config.json <<'JSON'
+{
+  "keys": [
+    { "platform": "kilo",    "label": "sin clave" },
+    { "platform": "ovh",     "label": "sin clave" },
+    { "platform": "aihorde", "label": "sin clave" }
+  ]
+}
+JSON
+  echo "Creado freellmapi.config.json con los proveedores sin clave (Kilo, OVH, AI Horde)."
+fi
+
 cat > docker-compose.yml <<YAML
 services:
   freellmapi:
@@ -55,12 +70,14 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
+      FREEAPI_CONFIG_PATH: /config/freellmapi.config.json
     # Solo en localhost: a internet NO se expone. Tailscale Serve lo publica
     # únicamente dentro de tu red privada.
     ports:
       - "127.0.0.1:${PORT}:3001"
     volumes:
       - freellmapi-data:/app/server/data
+      - ./freellmapi.config.json:/config/freellmapi.config.json:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -77,7 +94,7 @@ YAML
 
 paso "4/5 Arrancando el contenedor"
 $SUDO docker compose pull
-$SUDO docker compose up -d
+$SUDO docker compose up -d --force-recreate
 
 echo -n "Esperando a que responda"
 for _ in $(seq 1 30); do
