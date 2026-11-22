@@ -150,6 +150,14 @@ def attack_ramp(n, seconds):
     return env
 
 
+def fade_tail(x, seconds=0.02):
+    """Fundido al final de un one-shot para que no haga 'click' al cortarse."""
+    n = min(len(x), int(seconds * SR))
+    x = x.copy()
+    x[len(x) - n:] *= np.linspace(1, 0, n)
+    return x
+
+
 def add_at(buf, sound, time_sec, gain=1.0):
     """Suma 'sound' dentro de 'buf' empezando en 'time_sec' (recorta al final)."""
     i = int(round(time_sec * SR))
@@ -198,7 +206,7 @@ def make_cowbell(semitones, length=0.35):
     tone = bandpass(tone, 450, 5000)
     # Ataque muy corto + caída rápida con una cola breve (carácter "metálico")
     env = (0.75 * np.exp(-t / 0.018) + 0.25 * np.exp(-t / 0.13)) * attack_ramp(len(t), 0.001)
-    return normalize(np.tanh(2.0 * normalize(tone * env)))
+    return fade_tail(normalize(np.tanh(2.0 * normalize(tone * env))))
 
 
 def make_kick(length=0.55):
@@ -208,7 +216,7 @@ def make_kick(length=0.55):
     body = np.sin(2 * np.pi * np.cumsum(freq) / SR) * np.exp(-t / 0.2)
     click = highpass(rng.standard_normal(len(t)), 3000) * np.exp(-t / 0.003) * 0.25
     kick = np.tanh(3.5 * (body + click)) * attack_ramp(len(t), 0.0005)
-    return normalize(kick)
+    return fade_tail(normalize(kick), 0.05)
 
 
 def make_snare(length=0.4):
@@ -218,14 +226,14 @@ def make_snare(length=0.4):
     body = (np.sin(2 * np.pi * 185 * t) * np.exp(-t / 0.045)
             + 0.5 * np.sin(2 * np.pi * 330 * t) * np.exp(-t / 0.03))
     snare = 0.8 * normalize(noise) + 0.6 * normalize(body)
-    return normalize(np.tanh(2.0 * snare))
+    return fade_tail(normalize(np.tanh(2.0 * snare)))
 
 
 def make_hat(length=0.06, decay=0.012):
     """Hi-hat cerrado: ruido blanco con pasa-altos y caída muy rápida."""
     t = t_axis(length)
     hat = highpass(rng.standard_normal(len(t)), 7000, order=4) * np.exp(-t / decay)
-    return normalize(hat)
+    return fade_tail(normalize(hat), 0.005)
 
 
 # =============================================================================
