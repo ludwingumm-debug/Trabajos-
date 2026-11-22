@@ -11,10 +11,13 @@ Produce un archivo WAV con:
 Estructura: INTRO_BARS compases solo con cencerro y luego entra todo el beat.
 
 Uso:
-    python phonk_beat.py
+    python phonk_beat.py                      # beat con los ajustes de este archivo
+    python phonk_beat.py phonk_ajustes.json   # beat con los ajustes del Estudio Drift Phonk
 """
 
+import json
 import math
+import sys
 
 import numpy as np
 from scipy import signal
@@ -82,6 +85,7 @@ BASS_DRIVE = 4.0            # Distorsión del 808 (1 = limpio, 8 = muy sucio)
 # =============================================================================
 KICK_STEPS = [0, 6, 10]     # Bombo
 SNARE_STEPS = [4, 12]       # Caja en los tiempos 2 y 4
+HAT_STEPS = list(range(16)) # Hi-hats: todas las semicorcheas (quita números para dejar huecos)
 
 # Redobles de hi-hat: {compás dentro de un ciclo de 4: [(inicio, golpes, duración)]}
 #   inicio   -> semicorchea donde empieza el redoble
@@ -328,7 +332,7 @@ def render_drums(total, n_bars):
                 add_at(hats, hat_s, t0 + (start + h * span / hits) * STEP,
                        0.45 + 0.55 * h / max(1, hits - 1))
         for s in range(STEPS_PER_BAR):
-            if s not in skip:
+            if s not in skip and s in HAT_STEPS:
                 add_at(hats, hat_s, t0 + s * STEP, 1.0 if s % 2 == 0 else 0.6)
     snares = reverb(snares, make_reverb_ir(1.8, 0.5), SNARE_REVERB_WET)
     return kicks, snares, hats
@@ -337,7 +341,44 @@ def render_drums(total, n_bars):
 # =============================================================================
 # MAIN
 # =============================================================================
+# Parámetros que se pueden cambiar desde un JSON exportado por el Estudio Drift Phonk
+CONFIG_KEYS = [
+    "BPM", "DURATION", "INTRO_BARS", "COWBELL_F1", "COWBELL_F2", "SCALE", "COWBELL_MELODY",
+    "BASS_PROGRESSION", "BASS_PATTERN", "GLIDE_TIME", "BASS_DECAY", "BASS_DRIVE",
+    "KICK_STEPS", "SNARE_STEPS", "HAT_STEPS", "HAT_ROLLS", "VOLUMES",
+    "COWBELL_DRIVE", "COWBELL_REVERB_WET", "SNARE_REVERB_WET", "KICK_HPF", "HAT_HPF", "HAT_AIR",
+    "MASTER_DRIVE", "PEAK_DB", "FADE_OUT",
+]
+
+
+def load_config(path):
+    """Sobrescribe los parámetros con los de un archivo JSON (mismos nombres que arriba)."""
+    global BEAT, STEP, BAR, TONIC_HZ
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    g = globals()
+    for key, value in cfg.items():
+        if key not in CONFIG_KEYS:
+            print(f"Aviso: se ignora el parámetro desconocido {key!r}")
+            continue
+        if key == "BASS_PATTERN":
+            value = [tuple(n) for n in value]
+        elif key == "HAT_ROLLS":
+            value = {int(bar): [tuple(r) for r in rolls] for bar, rolls in value.items()}
+        elif key == "VOLUMES":
+            value = {**VOLUMES, **value}
+        g[key] = value
+    # Recalcula los valores que dependen de otros parámetros
+    BEAT = 60.0 / BPM
+    STEP = BEAT / 4
+    BAR = BEAT * 4
+    TONIC_HZ = COWBELL_F1 / 8
+    print(f"Ajustes cargados de {path}")
+
+
 def main():
+    if len(sys.argv) > 1:
+        load_config(sys.argv[1])
     total = int(DURATION * SR)
     n_bars = math.ceil(DURATION / BAR)
 
