@@ -3,18 +3,19 @@
 BLACK ASPHALT - an original dark drift phonk track, synthesized from scratch.
 
 Only numpy + scipy: every sound (cowbell, 808, kick, snare, hats, pads, lead,
-risers, impacts) is generated here; no samples are used.
+risers, impacts, and the orchestral layer: strings, brass, choir, taiko,
+timpani and the trailer "braam") is generated here; no samples are used.
 
     150 BPM · 4/4 · key of F# minor (with the dark phrygian G) · stereo · 44.1 kHz
 
 Arrangement (60 bars, about 1:40):
-    intro   8 bars  filtered cowbell, dark pad, drone, opening impact
-    build   4 bars  snare roll, riser, reverse crash, one beat of silence
-    drop 1 16 bars  full beat: deep 808 with dive, kick, snare, hats, cowbell riff A
-    break   8 bars  tape stop, dark lead melody, sub 808, filtered cowbell
+    intro   8 bars  filtered cowbell, choir swell, solo strings hint the epic theme
+    build   4 bars  snare + timpani rolls, tremolo strings, riser, one beat of silence
+    drop 1 16 bars  braam, deep 808 dive, full beat, brass stabs, epic theme on strings
+    break   8 bars  tape stop, choir, epic theme slowed down on strings, sub 808
     build   4 bars  second build
-    drop 2 16 bars  heavier 808 and kick patterns, higher cowbell riff B
-    outro   4 bars  cowbell fades in the filter, final impact
+    drop 2 16 bars  climax: theme on strings + brass, choir, taiko, heavier beat
+    outro   4 bars  cowbell fades, final braam + brass chord
 
 Usage:
     python dark_drift_phonk.py          -> writes dark_drift_phonk.wav
@@ -86,6 +87,21 @@ LEAD_MELODY = [
     (24, 7, 2), (26, 5, 2), (28, 1, 3), (31, 0, 1),
 ]
 
+# EPIC THEME (orchestral): 8 bars over the 4-bar progression, played twice per
+# drop. (start in beats, semitones from F#4, length in beats). It climbs from
+# F#4 to its peak on B5 in bar 7 and falls back to E5 to restart.
+EPIC_THEME = [
+    (0, 0, 1.5), (1.5, 7, 0.5), (2, 12, 2),            # F#m: F#4 - C#5 - F#5 (fifth + octave leap)
+    (4, 10, 1), (5, 8, 1), (6, 7, 2),                  # F#m: E5 - D5 - C#5
+    (8, 13, 1.5), (9.5, 12, 0.5), (10, 8, 2),          # G:   G5 - F#5 - D5
+    (12, 10, 2), (14, 5, 1), (15, 7, 1),               # Em:  E5 - B4 - C#5
+    (16, 12, 3), (19, 15, 1),                          # F#m: F#5 - A5
+    (20, 13, 1), (21, 12, 1), (22, 10, 1), (23, 8, 1),  # F#m: G5 - F#5 - E5 - D5
+    (24, 13, 2), (26, 17, 2),                          # G:   G5 - B5 (peak)
+    (28, 15, 1), (29, 13, 1), (30, 10, 2),             # Em:  A5 - G5 - E5
+]
+BREAK_SYNTH_LEAD = False        # the break now carries the orchestral theme instead
+
 # 808 patterns per bar: (16th step, length in 16ths, semitones over the bar root)
 BASS_A = [(0, 5, 0), (5, 3, 0), (8, 2, 0), (10, 4, 12), (14, 2, 0)]
 BASS_B = [(0, 3, 0), (3, 3, 0), (6, 2, 0), (8, 2, 12), (10, 2, 0), (12, 2, 12), (14, 2, 7)]
@@ -106,8 +122,11 @@ MIX = {
     "kick": 1.00, "snare": 1.20, "hats": 0.65, "sub": 0.85, "growl": 0.55,
     "cowbell": 1.00, "pad": 0.45, "drone": 0.30, "lead": 0.55, "fx": 0.45,
     "reverb": 0.55, "delay": 0.55,
+    "strings": 0.60, "brass": 0.68, "choir": 0.50, "perc": 0.42,
 }
-REVERB_SEND = {"snare": 0.22, "cowbell": 0.16, "pad": 0.30, "lead": 0.40, "fx": 0.45, "hats": 0.04}
+REVERB_SEND = {"snare": 0.22, "cowbell": 0.16, "pad": 0.30, "lead": 0.40, "fx": 0.45, "hats": 0.04,
+               "strings": 0.38, "brass": 0.28, "choir": 0.45, "perc": 0.25}
+SIDECHAIN_ORCH = (0.35, 0.15)   # orchestra breathes lightly with the kick
 SIDECHAIN_808 = (0.5, 0.07)     # (depth, release s) - 808 ducks under the kick
 SIDECHAIN_PAD = (0.7, 0.18)     # pad pumps with the kick
 TARGET_RMS_DB = -10.5           # loudness of the drops before the limiter
@@ -320,6 +339,93 @@ def make_drone(dur):
     return lp(x, 220) * np.sin(np.pi * p) ** 1.5
 
 
+# ----------------------------------------------------------- orchestral layer
+def _env(t, dur, attack, release):
+    return (1 - np.exp(-t / attack)) * np.where(t < dur, 1.0, np.exp(-(t - dur) / release))
+
+
+def make_strings(semis, dur, attack=0.12, release=0.45, bright=4500, tremolo=0.0, swell=False):
+    """String section: 6 detuned saws (3 per side), delayed vibrato, soft attack."""
+    f = ROOT_LEAD * 2 ** (semis / 12)
+    n = secs(dur + 4 * release)
+    t = tt(n)
+    vib = 1 + 0.0045 * np.sin(2 * np.pi * 5.4 * t + rng.random() * 6.28) * np.clip((t - 0.25) / 0.4, 0, 1)
+    out = np.zeros((2, n))
+    for v in range(6):
+        out[v % 2] += blep_saw(f * 2 ** ((v - 2.5) * 0.05 / 12) * vib, n, rng.random())
+    out = hp(lp(out, min(bright, f * 12)), 140)
+    env = _env(t, dur, attack, release)
+    if tremolo:                                   # fast bowing, like a string tremolo
+        env = env * (0.55 + 0.45 * np.abs(np.sin(np.pi * tremolo * t)))
+    if swell:
+        env = env * np.clip(t / dur, 0, 1) ** 2
+    return out * env / 3
+
+
+def make_brass(semis, dur, attack=0.03, release=0.18):
+    """Brass: detuned saws with a pitch scoop and a filter that opens on attack."""
+    f = ROOT_PAD * 2 ** (semis / 12)
+    n = secs(dur + 5 * release)
+    t = tt(n)
+    scoop = 2 ** (-0.4 * np.exp(-t / 0.045) / 12)
+    out = np.zeros((2, n))
+    for v, d in enumerate((-0.07, 0.0, 0.06, 0.1)):
+        out[v % 2] += blep_saw(f * 2 ** (d / 12) * scoop, n, rng.random())
+    bright = np.clip(t / 0.09, 0, 1) * (0.7 + 0.3 * np.exp(-t / 0.5))
+    y = np.tanh(1.6 * (bright * lp(out, 3800) + (1 - bright) * lp(out, 500)))
+    return y * _env(t, dur, attack, release) / 2
+
+
+def make_choir(semis_list, dur, attack=0.6, release=0.7):
+    """'Aah' choir: detuned saws with vibrato through the formants of the vowel A."""
+    n = secs(dur + 4 * release)
+    t = tt(n)
+    src = np.zeros((2, n))
+    for s in semis_list:
+        f = ROOT_PAD * 2 ** (s / 12)
+        for v in range(4):
+            vib = 1 + 0.005 * np.sin(2 * np.pi * (4.8 + 0.4 * v) * t + rng.random() * 6.28)
+            src[v % 2] += blep_saw(f * 2 ** ((v - 1.5) * 0.07 / 12) * vib, n, rng.random())
+    src = norm(src) + 0.04 * np.stack([hp(noise(n), 2500) for _ in range(2)])   # breath
+    vowel = sum(g * bp(src, fc - bw, fc + bw) for fc, g, bw in ((800, 1.0, 80), (1150, 0.5, 90), (2900, 0.25, 120)))
+    return norm(vowel * _env(t, dur, attack, release))
+
+
+def make_taiko():
+    n = secs(1.2)
+    t = tt(n)
+    f = 50 + 70 * np.exp(-t / 0.035)
+    body = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.4)
+    skin = lp(noise(n), 1500) * np.exp(-t / 0.025)
+    return fade_tail(norm(hp(np.tanh(2 * (body + 0.4 * skin)), 35, 1)), 0.1)
+
+
+def make_timpani(semis=0):
+    """Timpani tuned to F#2 (+semis): inharmonic drum modes + mallet."""
+    f0 = ROOT_808 * 2 * 2 ** (semis / 12)
+    n = secs(2.5)
+    t = tt(n)
+    glide = 1 + 0.03 * np.exp(-t / 0.05)
+    x = sum(g * np.sin(2 * np.pi * np.cumsum(f0 * r * glide) / SR) * np.exp(-t / d)
+            for r, g, d in ((1.0, 1.0, 1.3), (1.504, 0.5, 0.7), (1.742, 0.3, 0.5), (2.0, 0.25, 0.4)))
+    x = x + 0.3 * lp(noise(n), 800) * np.exp(-t / 0.01)
+    return fade_tail(norm(x * np.minimum(1, t / 0.001)), 0.2)
+
+
+def make_braam(dur=3.0):
+    """Trailer 'braam': low brass cluster on F#, saturated, filter opening."""
+    n = secs(dur)
+    t = tt(n)
+    out = np.zeros((2, n))
+    for f, g in ((ROOT_808, 1.0), (ROOT_808 * 2, 0.8), (ROOT_808 * 3, 0.5), (ROOT_808 * 4, 0.4)):
+        for ch, d in enumerate((-0.12, 0.1)):
+            out[ch] += g * blep_saw(f * 2 ** (d / 12), n, rng.random())
+    opening = np.clip(t / 0.25, 0, 1) * np.exp(-t / 1.2)
+    y = np.tanh(2.5 * norm(opening * lp(out, 2500) + (1 - opening) * lp(out, 300)))
+    y = hp(y, 70) * (1 - np.exp(-t / 0.05)) * np.exp(-t / 1.1)
+    return fade_tail(norm(y), 0.3)
+
+
 def make_reverb_ir(seconds=3.5, decay=0.55):
     """Stereo hall: two decorrelated noise tails (wide), dark, with predelay."""
     n = secs(seconds)
@@ -345,7 +451,7 @@ TOTAL_BARS = _b
 SONG_END = TOTAL_BARS * BAR
 N = secs(SONG_END + TAIL)
 
-BUSES = ["kick", "snare", "hats", "cowbell", "pad", "drone", "lead", "fx"]
+BUSES = ["kick", "snare", "hats", "cowbell", "pad", "drone", "lead", "fx", "strings", "brass", "choir", "perc"]
 bus = {name: np.zeros((2, N)) for name in BUSES}
 kick_times = []
 bass_notes = []                 # (start s, dur s, freq, glide s, from_freq or None, gain)
@@ -525,7 +631,7 @@ def arrange():
         bass_notes.append((bar_time("break", b), BAR, f, 0.12, None, 0.6))
     for b in range(0, 8, 2):
         play_kick("break", b, 0, 0.7)
-    for beat, semis, length in LEAD_MELODY:
+    for beat, semis, length in (LEAD_MELODY if BREAK_SYNTH_LEAD else []):
         place("lead", make_lead_note(semis, length * BEAT), bar_time("break") + beat * BEAT)
     # ---- DROP 2
     place("fx", SND["impact"], bar_time("drop2"), 1.0)
@@ -544,6 +650,100 @@ def arrange():
     # ---- PAD: one chord per bar everywhere except the drop-2 gap
     for b in range(TOTAL_BARS):
         place("pad", make_pad_chord([s for s in PAD_CHORDS[b % 4]], BAR), b * BAR)
+
+
+# ---------------------------------------------------------------- orchestra
+_brass_cache = {}
+
+
+def brass_note(semis, dur):
+    key = (semis, round(dur, 4))
+    if key not in _brass_cache:
+        _brass_cache[key] = make_brass(semis, dur)
+    return _brass_cache[key]
+
+
+def strings_theme(section, start_bar=0, octaves=(0, 12), gain=1.0, stretch=1.0, max_beats=32):
+    """Plays the epic theme on strings (one layer per octave)."""
+    t0 = bar_time(section, start_bar)
+    for beat, semis, length in EPIC_THEME:
+        if beat >= max_beats:
+            break
+        for o in octaves:
+            place("strings", make_strings(semis + o, length * BEAT * stretch * 0.98, bright=6000 if o > 0 else 4500),
+                  t0 + beat * BEAT * stretch, gain * (0.7 if o > 0 else 1.0))
+
+
+def brass_theme(section, start_bar=0, gain=1.0):
+    t0 = bar_time(section, start_bar)
+    for beat, semis, length in EPIC_THEME:
+        place("brass", brass_note(semis, length * BEAT * 0.95), t0 + beat * BEAT, gain)
+
+
+def brass_stabs(section, steps=(0, 10), gain=1.0):
+    for b in range(SECTION_START[section][1]):
+        chord = PAD_CHORDS[b % 4] + [PROGRESSION[b % 4] - 12]
+        for k in steps:
+            if is_gap(section, b, k):
+                continue
+            for s in chord:
+                place("brass", brass_note(s, 0.75 * BEAT), bar_time(section, b, k), gain)
+
+
+def choir_chords(section, gains):
+    for b, g in enumerate(gains):
+        place("choir", make_choir(PAD_CHORDS[b % 4], BAR), bar_time(section, b), g)
+
+
+def arrange_epic():
+    taiko, timp = make_taiko(), make_timpani()
+    # INTRO: choir swells in; solo strings hint the theme in bars 5-8
+    choir_chords("intro", np.linspace(0.3, 0.8, SECTION_START["intro"][1]))
+    strings_theme("intro", 4, octaves=(0,), gain=0.6, max_beats=16)
+    for b in (0, 4):
+        place("perc", taiko, bar_time("intro", b), 0.9)
+    # BUILDS: tremolo strings swell + timpani roll, then the braam at the drop
+    for sec in ("build1", "build2"):
+        bars = SECTION_START[sec][1]
+        length = bars * BAR - BEAT
+        for s in (0, 7, 12):                                   # F#4, C#5, F#5
+            place("strings", make_strings(s, length, attack=0.3, release=0.05, tremolo=12, swell=True), bar_time(sec), 0.8)
+        for b in range(bars - 2, bars):
+            for k in range(0, 16):
+                for half in (0, 0.5):                          # 32nd-note roll
+                    if is_gap(sec, b, k):
+                        continue
+                    prog = ((b - bars + 2) * 16 + k + half) / 32
+                    place("perc", timp, bar_time(sec, b, k + half), 0.15 + 0.6 * prog ** 1.5, pan=0.15 if half else -0.15)
+    for sec in ("drop1", "drop2"):
+        place("fx", make_braam(), bar_time(sec), 0.9)
+    # DROP 1: brass stabs + taiko from the start, epic theme on strings in the second half
+    brass_stabs("drop1", gain=0.55)
+    for b in range(SECTION_START["drop1"][1]):
+        place("perc", taiko, bar_time("drop1", b), 0.7)
+    strings_theme("drop1", 8, gain=0.9)
+    # BREAK: choir + theme at half speed on violins and cellos, timpani on the chords
+    choir_chords("break", [0.9] * SECTION_START["break"][1])
+    strings_theme("break", 0, octaves=(0, -12), gain=0.9, stretch=2.0, max_beats=16)
+    for b in range(0, 8, 2):
+        place("perc", make_timpani(PROGRESSION[b % 4]), bar_time("break", b), 0.8)
+    # DROP 2 (climax): theme on strings and brass twice, choir, taiko on 1 and 3 with fills
+    for start in (0, 8):
+        strings_theme("drop2", start, gain=1.0)
+        brass_theme("drop2", start, gain=0.9)
+    choir_chords("drop2", [0.8] * SECTION_START["drop2"][1])
+    for b in range(SECTION_START["drop2"][1]):
+        steps = [0, 8] + ([12, 13, 14, 15] if b % 4 == 3 else [])
+        for k in steps:
+            if not is_gap("drop2", b, k):
+                place("perc", taiko, bar_time("drop2", b, k), 0.8 if k in (0, 8) else 0.55)
+    # OUTRO: choir fades, then the final braam + held brass chord + timpani
+    choir_chords("outro", [0.7, 0.5, 0.3])
+    last = bar_time("outro", SECTION_START["outro"][1] - 1)
+    place("fx", make_braam(4.0), last, 1.0)
+    for s in (0, 3, 7, -12):
+        place("brass", make_brass(s, 2.5, release=0.6), last, 0.9)
+    place("perc", timp, last, 1.0)
 
 
 def automation(points):
@@ -613,6 +813,7 @@ def section_rms(x, section):
 def build_mix():
     """Arranges, renders and mixes the track. Returns (stems, master mix)."""
     arrange()
+    arrange_epic()
     sub, growl = render_808()
 
     # Automation (time s, value): cowbell filter and pad brightness per section
@@ -636,6 +837,10 @@ def build_mix():
         "bass": np.stack([bass, bass]), "cowbell": MIX["cowbell"] * cow, "pad": MIX["pad"] * pad,
         "drone": MIX["drone"] * bus["drone"], "lead": MIX["lead"] * bus["lead"], "fx": MIX["fx"] * bus["fx"],
     }
+    orch = sidechain(*SIDECHAIN_ORCH)
+    for name in ("strings", "brass", "choir"):
+        stems[name] = MIX[name] * bus[name] * orch
+    stems["perc"] = MIX["perc"] * bus["perc"]
     # Shared stereo hall reverb (returns high-passed so the low end stays clean)
     send = sum(REVERB_SEND.get(k, 0) * v for k, v in stems.items())
     ir_l, ir_r = make_reverb_ir()
