@@ -97,14 +97,18 @@ HAT_ROLLS = {
 # 4) MEZCLA
 # =============================================================================
 VOLUMES = {
-    "cowbell": 0.85,
-    "kick": 0.80,
-    "bass": 0.40,
+    "cowbell": 1.05,        # +6 dB vs. la versión anterior (la distorsión ya suma ~4 dB)
+    "kick": 1.25,           # compensa lo que quita el pasa-altos: mismo nivel que antes
+    "bass": 0.28,           # -3 dB respecto a la versión anterior (0.40)
     "snare": 1.00,
-    "hats": 0.40,
+    "hats": 0.60,
 }
-COWBELL_REVERB_WET = 0.20   # Cantidad de reverb en el cencerro (0..1)
+COWBELL_DRIVE = 4.0         # Distorsión del cencerro (1 = limpio, 6 = muy sucio)
+COWBELL_REVERB_WET = 0.30   # Cantidad de reverb en el cencerro (0..1)
 SNARE_REVERB_WET = 0.40     # Cantidad de reverb en la caja (0..1)
+KICK_HPF = 40               # Pasa-altos suave del bombo (Hz): limpia el subgrave
+HAT_HPF = 7000              # Los hi-hats solo usan ruido por encima de esta frecuencia
+HAT_AIR = 0.6               # Capa extra de ruido >11 kHz para dar brillo (0 = sin brillo)
 MASTER_DRIVE = 1.8          # Saturación del master (1 = suave, 3 = fuerte)
 PEAK_DB = -1.0              # Pico máximo final en dBFS (evita clipping)
 FADE_OUT = 1.0              # Fundido de salida en segundos
@@ -206,7 +210,8 @@ def make_cowbell(semitones, length=0.35):
     tone = bandpass(tone, 450, 5000)
     # Ataque muy corto + caída rápida con una cola breve (carácter "metálico")
     env = (0.75 * np.exp(-t / 0.018) + 0.25 * np.exp(-t / 0.13)) * attack_ramp(len(t), 0.001)
-    return fade_tail(normalize(np.tanh(2.0 * normalize(tone * env))))
+    # Distorsión tanh: añade armónicos para que el cencerro "corte" en la mezcla
+    return fade_tail(normalize(np.tanh(COWBELL_DRIVE * normalize(tone * env))))
 
 
 def make_kick(length=0.55):
@@ -216,6 +221,7 @@ def make_kick(length=0.55):
     body = np.sin(2 * np.pi * np.cumsum(freq) / SR) * np.exp(-t / 0.2)
     click = highpass(rng.standard_normal(len(t)), 3000) * np.exp(-t / 0.003) * 0.25
     kick = np.tanh(3.5 * (body + click)) * attack_ramp(len(t), 0.0005)
+    kick = highpass(kick, KICK_HPF, order=1)             # pasa-altos suave (6 dB/oct)
     return fade_tail(normalize(kick), 0.05)
 
 
@@ -232,7 +238,10 @@ def make_snare(length=0.4):
 def make_hat(length=0.06, decay=0.012):
     """Hi-hat cerrado: ruido blanco con pasa-altos y caída muy rápida."""
     t = t_axis(length)
-    hat = highpass(rng.standard_normal(len(t)), 7000, order=4) * np.exp(-t / decay)
+    noise = rng.standard_normal(len(t))
+    hat = highpass(noise, HAT_HPF, order=4)
+    hat += HAT_AIR * highpass(noise, 11000, order=4)    # capa de "aire" = más brillo
+    hat *= np.exp(-t / decay)
     return fade_tail(normalize(hat), 0.005)
 
 
