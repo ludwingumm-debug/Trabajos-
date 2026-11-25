@@ -181,6 +181,12 @@ FLUTE_MELODY = [
 ]
 KICK_TRAP_A = [0, 5, 10]
 KICK_TRAP_B = [0, 3, 6, 10, 14]
+# "Life" for the trap version: groove, variation and ear candy
+HAT_SWING = 0.10                # off-beat 16th hats come a little late (fraction of a 16th)
+HUMANIZE_MS = 2.5               # random timing spread of hats and percussion (ms)
+# 808 fill for the last bar of every 4-bar cycle: quick octave jumps
+BASS_FILL = [(0, 5, 0), (5, 3, 0), (8, 2, 0), (10, 2, 12), (12, 1, 0), (13, 1, 12), (14, 2, 7)]
+groove_rng = np.random.default_rng(SEED + 1)
 TRAP_CLAP = 8                   # half-time: clap/snare on beat 3
 # Hi-hat rolls per bar of the 4-bar cycle: (start step, length in steps,
 # hits, pitch rise). Hats play 8ths (16ths in drop 2) everywhere else.
@@ -627,6 +633,36 @@ def make_flute(semis, dur):
     return x * _env(t, dur, 0.06, 0.15)
 
 
+# ----------------------------------------------------------- ear candy
+def make_crash():
+    """Crash cymbal (stereo): bright noise + a few metallic partials, long decay."""
+    n = secs(2.2)
+    t = tt(n)
+    out = np.zeros((2, n))
+    for ch in range(2):
+        ring = sum(np.sin(2 * np.pi * f * t + groove_rng.random() * 6.28) for f in groove_rng.uniform(3000, 9000, 6))
+        out[ch] = lp(hp(noise(n), 4000), 14000) + 0.08 * ring
+        out[ch] *= np.exp(-t / 0.7) * np.minimum(1, t / 0.001)
+    return fade_tail(norm(out), 0.2)
+
+
+def make_rim():
+    """Rimshot / perc click: two short tones and a tiny noise burst."""
+    n = secs(0.12)
+    t = tt(n)
+    x = np.sin(2 * np.pi * 1700 * t) * np.exp(-t / 0.012) + 0.6 * np.sin(2 * np.pi * 520 * t) * np.exp(-t / 0.02)
+    x += 0.5 * hp(noise(n), 3000) * np.exp(-t / 0.003)
+    return fade_tail(norm(x), 0.02)
+
+
+def make_shaker():
+    """Soft shaker: band-passed noise with a slow-ish swish attack."""
+    n = secs(0.09)
+    t = tt(n)
+    x = bp(noise(n), 4000, 12000) * np.minimum(1, t / 0.008) * np.exp(-t / 0.03)
+    return fade_tail(norm(x), 0.01)
+
+
 def make_reverb_ir(seconds=3.5, decay=0.55):
     """Stereo hall: two decorrelated noise tails (wide), dark, with predelay."""
     n = secs(seconds)
@@ -678,6 +714,7 @@ SND = {
     "kick": make_kick(), "snare": make_snare(),
     "hat": make_hat(0.018, 0.07), "ohat": make_hat(0.12, 0.35),
     "impact": make_impact(),
+    "crash": make_crash(), "rim": make_rim(), "shaker": make_shaker(),
 }
 _cow_cache = {}
 
@@ -700,9 +737,9 @@ def is_gap(section, bar, step):
 
 
 # ---------------------------------------------------------------- cowbell
-def play_cowbell(section, riff, only_downbeats=False, gain=1.0, stop_bar=None):
+def play_cowbell(section, riff, only_downbeats=False, gain=1.0, stop_bar=None, start_bar=0, transpose=0):
     bars = SECTION_START[section][1] if stop_bar is None else stop_bar
-    for b in range(bars):
+    for b in range(start_bar, bars):
         for k in range(16):
             if is_gap(section, b, k) or (only_downbeats and k % 4):
                 continue
@@ -710,7 +747,7 @@ def play_cowbell(section, riff, only_downbeats=False, gain=1.0, stop_bar=None):
             if semis is None:
                 continue
             accent = 1.0 if k % 4 == 0 else (0.82 if k % 2 == 0 else 0.68)
-            place("cowbell", cowbell(semis), bar_time(section, b, k), gain * accent)
+            place("cowbell", cowbell(semis + transpose), bar_time(section, b, k), gain * accent)
 
 
 # ---------------------------------------------------------------- drums
@@ -756,8 +793,15 @@ def hat_pitched(factor):
     return _hat_cache[key]
 
 
+def human():
+    """Small random timing offset (s) so hats and percussion feel played."""
+    return groove_rng.normal(0, HUMANIZE_MS / 1000)
+
+
 def trap_drums(section, kick_pattern, heavy):
-    """Half-time trap groove: kicks with the 808, clap on beat 3, rolling hats."""
+    """Half-time trap groove: kicks with the 808, clap on beat 3, rolling hats,
+    plus swing, humanized velocities, shaker, rimshots and crashes on phrases."""
+    shaker_from = 0 if heavy else 4
     for b in range(SECTION_START[section][1]):
         cyc = b % 4
         rolls = TRAP_HAT_ROLLS[cyc]
@@ -769,8 +813,8 @@ def trap_drums(section, kick_pattern, heavy):
                 if is_gap(section, b, int(pos)):
                     continue
                 prog = h / max(1, hits - 1)
-                place("hats", hat_pitched(1 + (rise - 1) * prog), bar_time(section, b, pos),
-                      0.55 + 0.4 * prog, pan=0.2 if h % 2 else -0.15)
+                place("hats", hat_pitched(1 + (rise - 1) * prog), bar_time(section, b, pos) + human() / 2,
+                      (0.55 + 0.4 * prog) * groove_rng.uniform(0.9, 1.05), pan=0.2 if h % 2 else -0.15)
         for k in range(16):
             if is_gap(section, b, k):
                 continue
@@ -781,9 +825,18 @@ def trap_drums(section, kick_pattern, heavy):
             if heavy and cyc == 3 and k == 15:
                 place("snare", SND["snare"], bar_time(section, b, k), 0.45)
             if k not in covered and (k % 2 == 0 or heavy):
-                place("hats", SND["hat"], bar_time(section, b, k), 0.9 if k % 4 == 0 else 0.6, pan=-0.1)
+                swing = HAT_SWING if k % 2 else 0.0
+                vel = (0.9 if k % 4 == 0 else 0.6) * groove_rng.uniform(0.82, 1.05)
+                place("hats", SND["hat"], bar_time(section, b, k + swing) + human(), vel, pan=-0.1)
+            if b >= shaker_from:          # soft shaker on every 16th, swung, panned right
+                place("hats", SND["shaker"], bar_time(section, b, k + (HAT_SWING if k % 2 else 0)) + human(),
+                      (0.35 if k % 2 == 0 else 0.22) * groove_rng.uniform(0.8, 1.1), pan=0.4)
+            if k == 11 or (cyc % 2 and k == 3):  # rimshots in the off-beats, alternating sides
+                place("perc", SND["rim"], bar_time(section, b, k) + human(), 1.0, pan=-0.35 if k == 3 else 0.35)
         if cyc in (0, 2) and 6 not in covered:
             place("hats", SND["ohat"], bar_time(section, b, 6), 0.45, pan=0.25)
+        if b % 8 == 0:                    # crash at the start of every 8-bar phrase
+            place("fx", SND["crash"], bar_time(section, b), 0.55)
 
 
 def build_drums(section):
@@ -810,10 +863,11 @@ def build_drums(section):
 
 
 # ---------------------------------------------------------------- 808
-def add_808(section, pattern, dive=True, gain=1.0):
+def add_808(section, pattern, dive=True, gain=1.0, fill=None):
     for b in range(SECTION_START[section][1]):
         root = PROGRESSION[b % 4]
-        for i, (k, length, off) in enumerate(pattern):
+        bar_pattern = fill if fill and b % 4 == 3 else pattern
+        for i, (k, length, off) in enumerate(bar_pattern):
             if is_gap(section, b, k):
                 continue
             f = ROOT_808 * 2 ** ((root + off) / 12)
@@ -859,6 +913,10 @@ def arrange():
     riff_drop2 = RIFF_TRAP if trap else RIFF_B
     drums = trap_drums if trap else drop_drums
     play_cowbell("intro", riff_main)
+    if trap:                     # a soft shaker brings movement into the second half of the intro
+        for b in range(4, SECTION_START["intro"][1]):
+            for k in range(0, 16, 2):
+                place("hats", SND["shaker"], bar_time("intro", b, k) + human(), 0.15 + 0.05 * (b - 4), pan=0.35)
     # ---- BUILDS
     for sec in ("build1", "build2"):
         bars = SECTION_START[sec][1]
@@ -870,7 +928,11 @@ def arrange():
     place("fx", SND["impact"], bar_time("drop1"), 1.0)
     play_cowbell("drop1", riff_main)
     drums("drop1", KICK_TRAP_A if trap else KICK_A, heavy=False)
-    add_808("drop1", BASS_A)
+    add_808("drop1", BASS_A, fill=BASS_FILL if trap else None)
+    if trap:                     # second half: koto doubled an octave up + flute answer
+        play_cowbell("drop1", riff_main, gain=0.45, start_bar=8, transpose=12)
+        for beat, semis, length in FLUTE_MELODY:
+            place("flute", make_flute(semis, length * BEAT * 0.95), bar_time("drop1", 8) + beat * BEAT, 0.55)
     # ---- BREAK: downlifter, sub 808, lead, sparse cowbell
     place("fx", make_downlifter(2 * BAR), bar_time("break"), 0.5)
     place("fx", SND["impact"], bar_time("break"), 0.45)
@@ -898,7 +960,9 @@ def arrange():
         for rep_bar in (0, 8):
             for beat, semis, length in FLUTE_MELODY:
                 place("flute", make_flute(semis, length * BEAT * 0.95), bar_time("drop2", rep_bar) + beat * BEAT, 0.8)
-    add_808("drop2", BASS_B)
+    add_808("drop2", BASS_B, fill=BASS_FILL if trap else None)
+    if trap:
+        play_cowbell("drop2", riff_drop2, gain=0.45, start_bar=8, transpose=12)
     place("fx", make_reverse_crash(BAR), bar_time("outro") - BAR, 0.5)
     # ---- OUTRO: cowbell fades in the filter, final hit + long 808
     place("fx", SND["impact"], bar_time("outro"), 0.7)
