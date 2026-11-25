@@ -18,8 +18,9 @@ Arrangement (60 bars, about 1:40):
     outro   4 bars  cowbell fades, final braam + brass chord
 
 Usage:
-    python dark_drift_phonk.py              -> writes dark_drift_phonk.wav
-    python dark_drift_phonk.py himno        -> same track with another epic theme
+    python dark_drift_phonk.py              -> trap version  -> black_asphalt_trap.wav
+    python dark_drift_phonk.py phonk        -> drift phonk + orchestra -> dark_drift_phonk.wav
+    python dark_drift_phonk.py phonk himno  -> phonk version with another epic theme
                                                (original, himno, villano, heroica)
 """
 
@@ -144,6 +145,49 @@ EPIC_THEMES["heroica"] = [
 ]
 THEME = "original"
 EPIC_THEME = EPIC_THEMES[THEME]
+
+# =============================================================================
+# 2b) STYLE
+# =============================================================================
+# "trap":  half-time trap drums (clap on beat 3), trap hi-hat rolls, dark bell
+#          melody + flute, no cowbell and no orchestra.
+# "phonk": the drift phonk version with cowbell riffs and the orchestral layer.
+STYLE = "trap"
+
+
+def _steps(notes, length=64):
+    out = [None] * length
+    for k, s in notes:
+        out[k] = s
+    return out
+
+
+# Trap bell riff: 4 bars with a dotted 3+3+2 bounce (steps 0, 3, 6), semitones
+# from F#5. Bar 2 uses E# (the harmonic-minor leading tone) for a darker turn.
+RIFF_TRAP = _steps([
+    (0, 7), (3, 3), (6, 0), (8, 3), (10, 7), (12, 8), (14, 7),           # C# A F# A C# D C#
+    (16, 5), (19, 3), (22, 0), (24, -1), (26, 0), (28, 3), (30, 0),      # B A F# E# F# A F#
+    (32, 8), (35, 5), (38, 1), (40, 5), (42, 8), (44, 10), (46, 8),      # D B G B D E D
+    (48, 7), (51, 5), (54, 3), (56, 1), (58, -2), (60, -1), (62, 0),     # C# B A G E E# F#
+])
+# Trap flute melody: 4 bars (start in beats, semitones from F#5, length in beats).
+FLUTE_MELODY = [
+    (0, 0, 1.5), (1.5, 3, 0.5), (2, 1, 1), (3, 0, 1),          # F# A G F#
+    (4, -1, 1), (5, 0, 1), (6, -5, 2),                         # E# F# C#
+    (8, 1, 1.5), (9.5, 3, 0.5), (10, 5, 1), (11, 3, 1),        # G A B A
+    (12, 1, 1), (13, -2, 1), (14, -1, 2),                      # G E E#
+]
+KICK_TRAP_A = [0, 5, 10]
+KICK_TRAP_B = [0, 3, 6, 10, 14]
+TRAP_CLAP = 8                   # half-time: clap/snare on beat 3
+# Hi-hat rolls per bar of the 4-bar cycle: (start step, length in steps,
+# hits, pitch rise). Hats play 8ths (16ths in drop 2) everywhere else.
+TRAP_HAT_ROLLS = [
+    [(6, 2, 2, 1.0), (12, 4, 6, 1.15)],                  # 16ths, then a triplet roll
+    [(10, 2, 4, 1.3), (14, 2, 2, 1.0)],                  # 32nd roll pitched up
+    [(4, 2, 3, 1.1), (12, 2, 2, 1.0), (14, 2, 4, 1.25)],
+    [(8, 4, 4, 1.0), (12, 4, 8, 1.5)],                   # fill: 32nds climbing in pitch
+]
 BREAK_SYNTH_LEAD = False        # the break now carries the orchestral theme instead
 
 # 808 patterns per bar: (16th step, length in 16ths, semitones over the bar root)
@@ -166,10 +210,11 @@ MIX = {
     "kick": 1.00, "snare": 1.20, "hats": 0.65, "sub": 0.85, "growl": 0.55,
     "cowbell": 1.00, "pad": 0.45, "drone": 0.30, "lead": 0.55, "fx": 0.45,
     "reverb": 0.55, "delay": 0.55,
-    "strings": 0.60, "brass": 0.68, "choir": 0.50, "perc": 0.42,
+    "strings": 0.60, "brass": 0.68, "choir": 0.50, "perc": 0.42, "flute": 0.50,
+    "bell": 0.28,               # trap bell (replaces the cowbell level in trap style)
 }
 REVERB_SEND = {"snare": 0.22, "cowbell": 0.16, "pad": 0.30, "lead": 0.40, "fx": 0.45, "hats": 0.04,
-               "strings": 0.38, "brass": 0.28, "choir": 0.45, "perc": 0.25}
+               "strings": 0.38, "brass": 0.28, "choir": 0.45, "perc": 0.25, "flute": 0.35}
 SIDECHAIN_ORCH = (0.35, 0.15)   # orchestra breathes lightly with the kick
 SIDECHAIN_808 = (0.5, 0.07)     # (depth, release s) - 808 ducks under the kick
 SIDECHAIN_PAD = (0.7, 0.18)     # pad pumps with the kick
@@ -470,6 +515,32 @@ def make_braam(dur=3.0):
     return fade_tail(norm(y), 0.3)
 
 
+# ----------------------------------------------------------- trap melodies
+def make_bell(semis):
+    """Dark trap bell: FM synthesis with an inharmonic 3.5 ratio, long decay."""
+    f = ROOT_COWBELL * 2 ** (semis / 12)
+    n = secs(1.4)
+    t = tt(n)
+    index = 4 * np.exp(-t / 0.15)
+    x = np.sin(2 * np.pi * f * t + index * np.sin(2 * np.pi * 3.5 * f * t))
+    x += 0.3 * np.sin(2 * np.pi * 2 * f * t) * np.exp(-t / 0.3)
+    x *= np.exp(-t / 0.6) * np.minimum(1, t / 0.001)
+    return fade_tail(norm(np.tanh(1.3 * x)), 0.1)
+
+
+def make_flute(semis, dur):
+    """Breathy trap flute: near-sine tone, delayed vibrato and breath noise."""
+    f = ROOT_COWBELL * 2 ** (semis / 12)
+    n = secs(dur + 0.6)
+    t = tt(n)
+    vib = 1 + 0.006 * np.sin(2 * np.pi * 5.0 * t) * np.clip((t - 0.15) / 0.3, 0, 1)
+    ph = 2 * np.pi * np.cumsum(f * vib) / SR
+    tone = np.sin(ph) + 0.25 * np.sin(2 * ph) + 0.1 * np.sin(3 * ph)
+    breath = bp(noise(n), f * 0.8, min(f * 4, SR * 0.45)) * (0.6 * np.exp(-t / 0.08) + 0.4)
+    x = np.tanh(1.2 * (tone + 0.12 * norm(breath) * 3))
+    return x * _env(t, dur, 0.06, 0.15)
+
+
 def make_reverb_ir(seconds=3.5, decay=0.55):
     """Stereo hall: two decorrelated noise tails (wide), dark, with predelay."""
     n = secs(seconds)
@@ -495,7 +566,7 @@ TOTAL_BARS = _b
 SONG_END = TOTAL_BARS * BAR
 N = secs(SONG_END + TAIL)
 
-BUSES = ["kick", "snare", "hats", "cowbell", "pad", "drone", "lead", "fx", "strings", "brass", "choir", "perc"]
+BUSES = ["kick", "snare", "hats", "cowbell", "pad", "drone", "lead", "fx", "strings", "brass", "choir", "perc", "flute"]
 bus = {name: np.zeros((2, N)) for name in BUSES}
 kick_times = []
 bass_notes = []                 # (start s, dur s, freq, glide s, from_freq or None, gain)
@@ -526,9 +597,11 @@ _cow_cache = {}
 
 
 def cowbell(semis):
-    if semis not in _cow_cache:
-        _cow_cache[semis] = make_cowbell(semis)
-    return _cow_cache[semis]
+    """The main melodic one-shot: the cowbell (phonk) or the dark bell (trap)."""
+    key = (STYLE, semis)
+    if key not in _cow_cache:
+        _cow_cache[key] = make_bell(semis) if STYLE == "trap" else make_cowbell(semis)
+    return _cow_cache[key]
 
 
 def is_gap(section, bar, step):
@@ -582,6 +655,46 @@ def drop_drums(section, kick_pattern, heavy):
                 place("hats", SND["hat"], bar_time(section, b, k + h * span / hits), vel, pan=0.18 if h % 2 else -0.12)
             if k == 10 and cyc in (0, 2):
                 place("hats", SND["ohat"], bar_time(section, b, k), 0.5, pan=0.25)
+
+
+_hat_cache = {}
+
+
+def hat_pitched(factor):
+    key = round(factor, 3)
+    if key not in _hat_cache:
+        _hat_cache[key] = resample(SND["hat"], factor) if key != 1 else SND["hat"]
+    return _hat_cache[key]
+
+
+def trap_drums(section, kick_pattern, heavy):
+    """Half-time trap groove: kicks with the 808, clap on beat 3, rolling hats."""
+    for b in range(SECTION_START[section][1]):
+        cyc = b % 4
+        rolls = TRAP_HAT_ROLLS[cyc]
+        covered = set()
+        for start, span, hits, rise in rolls:
+            covered.update(range(start, start + span))
+            for h in range(hits):
+                pos = start + h * span / hits
+                if is_gap(section, b, int(pos)):
+                    continue
+                prog = h / max(1, hits - 1)
+                place("hats", hat_pitched(1 + (rise - 1) * prog), bar_time(section, b, pos),
+                      0.55 + 0.4 * prog, pan=0.2 if h % 2 else -0.15)
+        for k in range(16):
+            if is_gap(section, b, k):
+                continue
+            if k in kick_pattern:
+                play_kick(section, b, k)
+            if k == TRAP_CLAP:
+                place("snare", SND["snare"], bar_time(section, b, k))
+            if heavy and cyc == 3 and k == 15:
+                place("snare", SND["snare"], bar_time(section, b, k), 0.45)
+            if k not in covered and (k % 2 == 0 or heavy):
+                place("hats", SND["hat"], bar_time(section, b, k), 0.9 if k % 4 == 0 else 0.6, pan=-0.1)
+        if cyc in (0, 2) and 6 not in covered:
+            place("hats", SND["ohat"], bar_time(section, b, 6), 0.45, pan=0.25)
 
 
 def build_drums(section):
@@ -652,24 +765,35 @@ def arrange():
     # ---- INTRO: opening hit, drone, pad, cowbell behind a closed filter
     place("fx", SND["impact"], 0.0, 0.6)
     place("drone", make_drone(SECTION_START["intro"][1] * BAR + 2.0), 0.0)
-    play_cowbell("intro", RIFF_A)
+    trap = STYLE == "trap"
+    riff_main = RIFF_TRAP if trap else RIFF_A
+    riff_drop2 = RIFF_TRAP if trap else RIFF_B
+    drums = trap_drums if trap else drop_drums
+    play_cowbell("intro", riff_main)
     # ---- BUILDS
     for sec in ("build1", "build2"):
         bars = SECTION_START[sec][1]
-        play_cowbell(sec, RIFF_A)
+        play_cowbell(sec, riff_main)
         build_drums(sec)
         place("fx", make_riser(bars * BAR - BEAT), bar_time(sec), 0.55)
         place("fx", make_reverse_crash(BAR), bar_time(sec, bars) - BAR, 0.5)
     # ---- DROP 1
     place("fx", SND["impact"], bar_time("drop1"), 1.0)
-    play_cowbell("drop1", RIFF_A)
-    drop_drums("drop1", KICK_A, heavy=False)
+    play_cowbell("drop1", riff_main)
+    drums("drop1", KICK_TRAP_A if trap else KICK_A, heavy=False)
     add_808("drop1", BASS_A)
     # ---- BREAK: downlifter, sub 808, lead, sparse cowbell
     place("fx", make_downlifter(2 * BAR), bar_time("break"), 0.5)
     place("fx", SND["impact"], bar_time("break"), 0.45)
     place("drone", make_drone(SECTION_START["break"][1] * BAR + 1.0), bar_time("break"))
-    play_cowbell("break", RIFF_A, only_downbeats=True, gain=0.8)
+    play_cowbell("break", riff_main, only_downbeats=True, gain=0.8)
+    if trap:                     # flute melody twice over the break, light hats in the second half
+        for rep_bar in (0, 4):
+            for beat, semis, length in FLUTE_MELODY:
+                place("flute", make_flute(semis, length * BEAT * 0.95), bar_time("break", rep_bar) + beat * BEAT)
+        for b in range(4, 8):
+            for k in range(0, 16, 2):
+                place("hats", SND["hat"], bar_time("break", b, k), 0.5 if k % 4 else 0.7, pan=-0.1)
     for b in range(6):
         f = ROOT_808 * 2 ** (PROGRESSION[b % 4] / 12)
         bass_notes.append((bar_time("break", b), BAR, f, 0.12, None, 0.6))
@@ -679,13 +803,17 @@ def arrange():
         place("lead", make_lead_note(semis, length * BEAT), bar_time("break") + beat * BEAT)
     # ---- DROP 2
     place("fx", SND["impact"], bar_time("drop2"), 1.0)
-    play_cowbell("drop2", RIFF_B)
-    drop_drums("drop2", KICK_B, heavy=True)
+    play_cowbell("drop2", riff_drop2)
+    drums("drop2", KICK_TRAP_B if trap else KICK_B, heavy=True)
+    if trap:                     # flute answers the bell in bars 1-4 and 9-12
+        for rep_bar in (0, 8):
+            for beat, semis, length in FLUTE_MELODY:
+                place("flute", make_flute(semis, length * BEAT * 0.95), bar_time("drop2", rep_bar) + beat * BEAT, 0.8)
     add_808("drop2", BASS_B)
     place("fx", make_reverse_crash(BAR), bar_time("outro") - BAR, 0.5)
     # ---- OUTRO: cowbell fades in the filter, final hit + long 808
     place("fx", SND["impact"], bar_time("outro"), 0.7)
-    play_cowbell("outro", RIFF_A, stop_bar=SECTION_START["outro"][1] - 1)
+    play_cowbell("outro", riff_main, stop_bar=SECTION_START["outro"][1] - 1)
     place("drone", make_drone(SECTION_START["outro"][1] * BAR + 2.0), bar_time("outro"))
     last = bar_time("outro", SECTION_START["outro"][1] - 1)
     place("fx", SND["impact"], last, 1.0)
@@ -740,6 +868,8 @@ def choir_chords(section, gains):
 
 
 def arrange_epic():
+    if STYLE != "phonk":
+        return
     taiko, timp = make_taiko(), make_timpani()
     # INTRO: choir swells in; solo strings hint the theme in bars 5-8
     choir_chords("intro", np.linspace(0.3, 0.8, SECTION_START["intro"][1]))
@@ -878,11 +1008,11 @@ def build_mix():
 
     stems = {
         "kick": MIX["kick"] * bus["kick"], "snare": MIX["snare"] * bus["snare"], "hats": MIX["hats"] * bus["hats"],
-        "bass": np.stack([bass, bass]), "cowbell": MIX["cowbell"] * cow, "pad": MIX["pad"] * pad,
+        "bass": np.stack([bass, bass]), "cowbell": MIX["bell" if STYLE == "trap" else "cowbell"] * cow, "pad": MIX["pad"] * pad,
         "drone": MIX["drone"] * bus["drone"], "lead": MIX["lead"] * bus["lead"], "fx": MIX["fx"] * bus["fx"],
     }
     orch = sidechain(*SIDECHAIN_ORCH)
-    for name in ("strings", "brass", "choir"):
+    for name in ("strings", "brass", "choir", "flute"):
         stems[name] = MIX[name] * bus[name] * orch
     stems["perc"] = MIX["perc"] * bus["perc"]
     # Shared stereo hall reverb (returns high-passed so the low end stays clean)
@@ -891,7 +1021,7 @@ def build_mix():
     verb = np.stack([signal.fftconvolve(send[0], ir_l)[:N], signal.fftconvolve(send[1], ir_r)[:N]])
     stems["reverb"] = MIX["reverb"] * hp(verb, 200)
     # Ping-pong delay (dotted 8th) on cowbell and lead
-    stems["delay"] = MIX["delay"] * ping_pong(0.5 * stems["cowbell"] + stems["lead"], 3 * STEP, 0.38)
+    stems["delay"] = MIX["delay"] * ping_pong(0.5 * stems["cowbell"] + stems["lead"] + 0.5 * stems["flute"], 3 * STEP, 0.38)
 
     mix = sum(stems.values())
     mix = tape_stop(mix, bar_time("break") - 2 * BEAT, bar_time("break"))
@@ -913,17 +1043,20 @@ def build_mix():
 
 
 def main():
-    global THEME, EPIC_THEME
-    if len(sys.argv) > 1:
-        THEME = sys.argv[1]
-        if THEME not in EPIC_THEMES:
-            sys.exit(f"Unknown theme {THEME!r}. Choose one of: {', '.join(EPIC_THEMES)}")
-        EPIC_THEME = EPIC_THEMES[THEME]
-        print(f"Epic theme: {THEME}")
+    global THEME, EPIC_THEME, STYLE
+    for arg in sys.argv[1:]:
+        if arg in ("trap", "phonk"):
+            STYLE = arg
+        elif arg in EPIC_THEMES:
+            THEME, EPIC_THEME = arg, EPIC_THEMES[arg]
+        else:
+            sys.exit(f"Unknown option {arg!r}. Use trap or phonk, and for phonk a theme: {', '.join(EPIC_THEMES)}")
+    out = "black_asphalt_trap.wav" if STYLE == "trap" else OUTPUT_FILE
+    print(f"Style: {STYLE}" + (f"  |  epic theme: {THEME}" if STYLE == "phonk" else ""))
     _, mix = build_mix()
-    wavfile.write(OUTPUT_FILE, SR, (mix.T * 32767).astype(np.int16))
+    wavfile.write(out, SR, (mix.T * 32767).astype(np.int16))
 
-    print(f"Done: {OUTPUT_FILE}  |  {BPM} BPM  |  {TOTAL_BARS} bars  |  {(SONG_END + TAIL):.1f} s  |  stereo")
+    print(f"Done: {out}  |  {BPM} BPM  |  {TOTAL_BARS} bars  |  {(SONG_END + TAIL):.1f} s  |  stereo")
     for name, (start, bars) in SECTION_START.items():
         m, s = divmod(start * BAR, 60)
         print(f"  {int(m)}:{s:05.2f}  {name:<7} {bars:>2} bars   RMS {db(section_rms(mix, name)):6.1f} dBFS")
