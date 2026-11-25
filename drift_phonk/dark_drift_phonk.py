@@ -18,8 +18,12 @@ Arrangement (60 bars, about 1:40):
     outro   4 bars  cowbell fades, final braam + brass chord
 
 Usage:
-    python dark_drift_phonk.py          -> writes dark_drift_phonk.wav
+    python dark_drift_phonk.py              -> writes dark_drift_phonk.wav
+    python dark_drift_phonk.py himno        -> same track with another epic theme
+                                               (original, himno, villano, heroica)
 """
+
+import sys
 
 import numpy as np
 from scipy import ndimage, signal
@@ -87,10 +91,13 @@ LEAD_MELODY = [
     (24, 7, 2), (26, 5, 2), (28, 1, 3), (31, 0, 1),
 ]
 
-# EPIC THEME (orchestral): 8 bars over the 4-bar progression, played twice per
-# drop. (start in beats, semitones from F#4, length in beats). It climbs from
-# F#4 to its peak on B5 in bar 7 and falls back to E5 to restart.
-EPIC_THEME = [
+# EPIC THEMES (orchestral): 8 bars over the 4-bar progression, played twice
+# per drop. Each note: (start in beats, semitones from F#4, length in beats).
+# Semitones: 0 F#4, 1 G, 3 A, 5 B, 7 C#5, 8 D, 10 E, 11 E#, 12 F#5, 13 G, 15 A,
+#            17 B, 19 C#6, 20 D6.  Pick one with THEME (or the command line).
+EPIC_THEMES = {}
+# "original": climbs from F#4 to a peak on B5 in bar 7, falls back to E5.
+EPIC_THEMES["original"] = [
     (0, 0, 1.5), (1.5, 7, 0.5), (2, 12, 2),            # F#m: F#4 - C#5 - F#5 (fifth + octave leap)
     (4, 10, 1), (5, 8, 1), (6, 7, 2),                  # F#m: E5 - D5 - C#5
     (8, 13, 1.5), (9.5, 12, 0.5), (10, 8, 2),          # G:   G5 - F#5 - D5
@@ -100,6 +107,43 @@ EPIC_THEME = [
     (24, 13, 2), (26, 17, 2),                          # G:   G5 - B5 (peak)
     (28, 15, 1), (29, 13, 1), (30, 10, 2),             # Em:  A5 - G5 - E5
 ]
+# "himno": trailer anthem built on one catchy dotted hook ("ta-ta TAAA")
+# repeated up the scale; the second half answers an octave higher.
+EPIC_THEMES["himno"] = [
+    (0, 7, 0.75), (0.75, 7, 0.25), (1, 12, 1), (2, 10, 0.75), (2.75, 8, 0.25), (3, 7, 1),       # C# C# F# E D C#
+    (4, 3, 0.75), (4.75, 3, 0.25), (5, 7, 1), (6, 5, 1), (7, 3, 1),                             # A A C# B A
+    (8, 8, 0.75), (8.75, 8, 0.25), (9, 13, 1), (10, 12, 0.75), (10.75, 10, 0.25), (11, 8, 1),   # D D G F# E D
+    (12, 5, 0.75), (12.75, 5, 0.25), (13, 10, 1), (14, 8, 1), (15, 7, 1),                       # B B E D C#
+    (16, 7, 0.75), (16.75, 7, 0.25), (17, 12, 1), (18, 15, 0.75), (18.75, 13, 0.25), (19, 12, 1),  # C# C# F# A G F#
+    (20, 10, 0.75), (20.75, 10, 0.25), (21, 15, 1), (22, 13, 1), (23, 12, 1),                   # E E A G F#
+    (24, 13, 0.75), (24.75, 13, 0.25), (25, 17, 1), (26, 15, 0.75), (26.75, 13, 0.25), (27, 17, 1),  # G G B A G B
+    (28, 19, 2), (30, 17, 1), (31, 15, 1),                                                      # C#6 B A
+]
+# "villano": dark and mysterious, harmonic minor. Its signature is the
+# F#-E#-F# turn (the E# leading tone) and chromatic tension before each bar.
+EPIC_THEMES["villano"] = [
+    (0, 12, 1), (1, 11, 0.5), (1.5, 12, 0.5), (2, 15, 1), (3, 13, 1),     # F# E# F# A G
+    (4, 12, 1), (5, 11, 0.5), (5.5, 12, 0.5), (6, 7, 2),                  # F# E# F# C#
+    (8, 13, 1), (9, 12, 0.5), (9.5, 13, 0.5), (10, 17, 1), (11, 15, 1),   # G F# G B A
+    (12, 13, 1), (13, 10, 1), (14, 11, 2),                                # G E E# (tension)
+    (16, 12, 1), (17, 11, 0.5), (17.5, 12, 0.5), (18, 19, 1), (19, 17, 1),  # F# E# F# C#6 B
+    (20, 15, 1), (21, 13, 1), (22, 12, 2),                                # A G F#
+    (24, 13, 1.5), (25.5, 12, 0.5), (26, 8, 1), (27, 7, 1),               # G F# D C#
+    (28, 10, 1), (29, 11, 1), (30, 12, 2),                                # E E# F#
+]
+# "heroica": soaring arpeggios that leap higher each phrase, up to D6.
+EPIC_THEMES["heroica"] = [
+    (0, 0, 1), (1, 7, 1), (2, 15, 2),                     # F#4 C#5 A5 (rising arpeggio)
+    (4, 13, 1), (5, 12, 1), (6, 10, 1.5), (7.5, 12, 0.5),  # G F# E F#
+    (8, 8, 1), (9, 13, 1), (10, 17, 2),                   # D G B (G chord arpeggio)
+    (12, 15, 1), (13, 13, 1), (14, 10, 2),                # A G E
+    (16, 7, 1), (17, 12, 1), (18, 19, 2),                 # C#5 F#5 C#6 (higher)
+    (20, 17, 1), (21, 15, 1), (22, 13, 1), (23, 12, 1),   # B A G F#
+    (24, 13, 1), (25, 17, 1), (26, 20, 2),                # G B D6 (peak)
+    (28, 19, 1), (29, 17, 1), (30, 15, 1), (31, 10, 1),   # C#6 B A E
+]
+THEME = "original"
+EPIC_THEME = EPIC_THEMES[THEME]
 BREAK_SYNTH_LEAD = False        # the break now carries the orchestral theme instead
 
 # 808 patterns per bar: (16th step, length in 16ths, semitones over the bar root)
@@ -869,6 +913,13 @@ def build_mix():
 
 
 def main():
+    global THEME, EPIC_THEME
+    if len(sys.argv) > 1:
+        THEME = sys.argv[1]
+        if THEME not in EPIC_THEMES:
+            sys.exit(f"Unknown theme {THEME!r}. Choose one of: {', '.join(EPIC_THEMES)}")
+        EPIC_THEME = EPIC_THEMES[THEME]
+        print(f"Epic theme: {THEME}")
     _, mix = build_mix()
     wavfile.write(OUTPUT_FILE, SR, (mix.T * 32767).astype(np.int16))
 
