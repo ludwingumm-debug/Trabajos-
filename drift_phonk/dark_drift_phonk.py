@@ -6,22 +6,27 @@ Only numpy + scipy: every sound (cowbell, 808, kick, snare, hats, pads, lead,
 risers, impacts, and the orchestral layer: strings, brass, choir, taiko,
 timpani and the trailer "braam") is generated here; no samples are used.
 
-    150 BPM · 4/4 · key of F# minor (with the dark phrygian G) · stereo · 44.1 kHz
+Default version (LAYOUT "128"): trap, 128 BPM, D minor, 3:23, stereo, timed so
+that every change lands on the same second as the reference track it replaces:
+    0:00    intro    melody (koto) alone behind a filter, pad, drone
+    0:07.5  build    snare roll, hats, riser, one beat of silence
+    0:15    drop 1   full trap beat; bass cut at 0:44
+    0:45    drop 2   heavier, flute answers; bass cut at 1:44
+    1:45    drop 3   bass cut + tape stop at 2:14
+    2:15    break    almost silent: pad, sparse koto, soft flute
+    2:30    build 2  808 returns, kicks, snare roll, silence
+    2:46.9  drop 4   final drop
+    3:16.9  end      final hit with a long diving 808
 
-Arrangement (60 bars, about 1:40):
-    intro   8 bars  filtered cowbell, choir swell, solo strings hint the epic theme
-    build   4 bars  snare + timpani rolls, tremolo strings, riser, one beat of silence
-    drop 1 16 bars  braam, deep 808 dive, full beat, brass stabs, epic theme on strings
-    break   8 bars  tape stop, choir, epic theme slowed down on strings, sub 808
-    build   4 bars  second build
-    drop 2 16 bars  climax: theme on strings + brass, choir, taiko, heavier beat
-    outro   4 bars  cowbell fades, final braam + brass chord
+Original version (LAYOUT "150", run with: 150): 150 BPM, F# minor, 1:40, with
+either the trap style or the drift phonk style with the orchestral layer.
 
 Usage:
-    python dark_drift_phonk.py              -> trap version  -> black_asphalt_trap.wav
-    python dark_drift_phonk.py phonk        -> drift phonk + orchestra -> dark_drift_phonk.wav
-    python dark_drift_phonk.py phonk himno  -> phonk version with another epic theme
-                                               (original, himno, villano, heroica)
+    python dark_drift_phonk.py                 -> 128 BPM trap  -> black_asphalt_trap.wav
+    python dark_drift_phonk.py 150             -> 150 BPM trap  -> black_asphalt_trap_150.wav
+    python dark_drift_phonk.py 150 phonk       -> drift phonk + orchestra -> dark_drift_phonk.wav
+    python dark_drift_phonk.py 150 phonk himno -> phonk with another epic theme
+                                                  (original, himno, villano, heroica)
 """
 
 import sys
@@ -34,24 +39,41 @@ from scipy.io import wavfile
 # 1) GLOBAL SETTINGS
 # =============================================================================
 SR = 44100
-BPM = 150                       # tempo (everything else follows it)
+# LAYOUT "128": timed to the reference structure (128 BPM, D minor, 3:23), so the
+#               track can replace that song in an edit without re-cutting the video.
+# LAYOUT "150": the original 1:40 version (150 BPM, F# minor). Run with: 150
+LAYOUT = "150" if "150" in sys.argv[1:] else "128"
+BPM = 128 if LAYOUT == "128" else 150   # tempo (everything else follows it)
 OUTPUT_FILE = "dark_drift_phonk.wav"
 SEED = 1337                     # noise seed: same value = same track
-TAIL = 4.0                      # seconds of reverb tail after the last bar
+TAIL = 6.6 if LAYOUT == "128" else 4.0   # seconds after the last bar (final hit rings out)
+STEREO_WIDTH = 2.4 if LAYOUT == "128" else 1.0   # side level above 140 Hz in the master
 
 BEAT = 60.0 / BPM
 STEP = BEAT / 4                 # one 16th note
 BAR = BEAT * 4
 
-# Key: every pitch is written in semitones relative to these F# roots.
-ROOT_808 = 46.25                # F#1  - the 808 and kick fundamental
-ROOT_PAD = ROOT_808 * 4         # F#3  - pad chords
-ROOT_LEAD = ROOT_808 * 8        # F#4  - break lead
-ROOT_COWBELL = ROOT_808 * 16    # F#5  - low tone of the cowbell (~740 Hz)
+# Key: every pitch is written in semitones relative to these roots
+# (D minor in the 128 layout, F# minor in the 150 layout).
+ROOT_808 = 36.71 if LAYOUT == "128" else 46.25   # D1 / F#1 - the 808 and kick fundamental
+ROOT_PAD = ROOT_808 * 4         # D3 / F#3 - pad chords
+ROOT_LEAD = ROOT_808 * 8        # D4 / F#4 - break lead
+ROOT_COWBELL = ROOT_808 * 16    # D5 / F#5 - riff instruments (koto plays an octave below)
 COWBELL_RATIO = 800 / 540       # ratio between the two cowbell oscillators
 
-# Arrangement: (section name, bars). Reorder or resize freely.
-SECTIONS = [
+# Arrangement: (section name, bars). Each change lands on the same second as
+# in the reference (bar = 1.875 s at 128 BPM).
+SECTIONS_128 = [
+    ("intro", 4),       # 0:00    melody alone behind a filter
+    ("build1", 4),      # 0:07.5  rise, hats appear, one beat of silence
+    ("drop1", 16),      # 0:15    full beat; bass cut at 0:44
+    ("drop2", 32),      # 0:45    heavier; bass cut at 1:44
+    ("drop3", 16),      # 1:45    bass cut + tape stop at 2:14
+    ("break", 8),       # 2:15    breakdown, almost silent
+    ("build2", 9),      # 2:30    808 returns, rise, silence
+    ("drop4", 16),      # 2:46.9  final drop; final hit at 3:16.9
+]
+SECTIONS_150 = [
     ("intro", 8),
     ("build1", 4),
     ("drop1", 16),
@@ -60,6 +82,10 @@ SECTIONS = [
     ("drop2", 16),
     ("outro", 4),
 ]
+SECTIONS = SECTIONS_128 if LAYOUT == "128" else SECTIONS_150
+# Sections whose last beat is silent, and drops whose last 2 beats drop the bass
+GAP_SECTIONS = ("build1", "build2") if LAYOUT == "128" else ("build1", "build2", "drop2")
+CUT_SECTIONS = ("drop1", "drop2", "drop3") if LAYOUT == "128" else ()
 
 # =============================================================================
 # 2) MELODIES AND HARMONY  (semitones from the roots above; None = rest)
@@ -698,6 +724,16 @@ def bar_time(section, bar=0, step=0.0):
     return (SECTION_START[section][0] + bar) * BAR + step * STEP
 
 
+def nbars(section):
+    """Number of (possibly partial) bars in a section."""
+    return int(np.ceil(SECTION_START[section][1]))
+
+
+def section_end(section):
+    a, n = SECTION_START[section]
+    return (a + n) * BAR
+
+
 def place(name, snd, t, gain=1.0, pan=0.0):
     """Adds a mono or stereo sound to a bus at time t (constant-power pan)."""
     i = secs(t)
@@ -731,14 +767,19 @@ def cowbell(semis):
 
 
 def is_gap(section, bar, step):
-    """Last beat of a build (and of drop 2) is silent before the next hit."""
-    last = SECTION_START[section][1] - 1
-    return section in ("build1", "build2", "drop2") and bar == last and step >= 12
+    """True past the end of the section, and on the silent last beat of a build."""
+    t, end = bar_time(section, bar, step), section_end(section)
+    return t >= end - 1e-6 or (section in GAP_SECTIONS and t >= end - BEAT - 1e-6)
+
+
+def is_cut(section, bar, step):
+    """Last 2 beats of a main drop: kick, clap and 808 drop out for a moment."""
+    return section in CUT_SECTIONS and bar_time(section, bar, step) >= section_end(section) - 2 * BEAT - 1e-6
 
 
 # ---------------------------------------------------------------- cowbell
 def play_cowbell(section, riff, only_downbeats=False, gain=1.0, stop_bar=None, start_bar=0, transpose=0):
-    bars = SECTION_START[section][1] if stop_bar is None else stop_bar
+    bars = nbars(section) if stop_bar is None else stop_bar
     for b in range(start_bar, bars):
         for k in range(16):
             if is_gap(section, b, k) or (only_downbeats and k % 4):
@@ -758,7 +799,7 @@ def play_kick(section, b, k, gain=1.0):
 
 
 def drop_drums(section, kick_pattern, heavy):
-    for b in range(SECTION_START[section][1]):
+    for b in range(nbars(section)):
         cyc = b % 4
         for k in range(16):
             if is_gap(section, b, k):
@@ -802,7 +843,7 @@ def trap_drums(section, kick_pattern, heavy):
     """Half-time trap groove: kicks with the 808, clap on beat 3, rolling hats,
     plus swing, humanized velocities, shaker, rimshots and crashes on phrases."""
     shaker_from = 0 if heavy else 4
-    for b in range(SECTION_START[section][1]):
+    for b in range(nbars(section)):
         cyc = b % 4
         rolls = TRAP_HAT_ROLLS[cyc]
         covered = set()
@@ -818,11 +859,12 @@ def trap_drums(section, kick_pattern, heavy):
         for k in range(16):
             if is_gap(section, b, k):
                 continue
-            if k in kick_pattern:
+            cut = is_cut(section, b, k)
+            if k in kick_pattern and not cut:
                 play_kick(section, b, k)
-            if k == TRAP_CLAP:
+            if k == TRAP_CLAP and not cut:
                 place("snare", SND["snare"], bar_time(section, b, k))
-            if heavy and cyc == 3 and k == 15:
+            if heavy and cyc == 3 and k == 15 and not cut:
                 place("snare", SND["snare"], bar_time(section, b, k), 0.45)
             if k not in covered and (k % 2 == 0 or heavy):
                 swing = HAT_SWING if k % 2 else 0.0
@@ -864,11 +906,11 @@ def build_drums(section):
 
 # ---------------------------------------------------------------- 808
 def add_808(section, pattern, dive=True, gain=1.0, fill=None):
-    for b in range(SECTION_START[section][1]):
+    for b in range(nbars(section)):
         root = PROGRESSION[b % 4]
         bar_pattern = fill if fill and b % 4 == 3 else pattern
         for i, (k, length, off) in enumerate(bar_pattern):
-            if is_gap(section, b, k):
+            if is_gap(section, b, k) or is_cut(section, b, k):
                 continue
             f = ROOT_808 * 2 ** ((root + off) / 12)
             first = dive and b == 0 and i == 0
@@ -904,7 +946,89 @@ def render_808():
 # =============================================================================
 # ARRANGEMENT
 # =============================================================================
+def flute_phrase(section, bar, gain=1.0):
+    for beat, semis, length in FLUTE_MELODY:
+        place("flute", make_flute(semis, length * BEAT * 0.95), bar_time(section, bar) + beat * BEAT, gain)
+
+
+def arrange_128():
+    """Trap arrangement timed to the 128 BPM reference structure."""
+    riff = RIFF_TRAP
+    # ---- INTRO (0:00): melody alone behind a closed filter, pad, drone
+    place("fx", SND["impact"], 0.0, 0.4)
+    place("drone", make_drone((nbars("intro") + nbars("build1")) * BAR + 1.0), 0.0)
+    play_cowbell("intro", riff)
+    # ---- BUILD 1 (0:07.5): snare roll, hats, riser, silence before the drop
+    play_cowbell("build1", riff)
+    build_drums("build1")
+    place("fx", make_riser(nbars("build1") * BAR - BEAT), bar_time("build1"), 0.55)
+    place("fx", make_reverse_crash(BAR), bar_time("drop1") - BAR, 0.5)
+    # ---- MAIN (0:15 - 2:15): three drops, each ending in a 2-beat bass cut
+    main = [("drop1", KICK_TRAP_A, False, BASS_A, (8,)),
+            ("drop2", KICK_TRAP_B, True, BASS_B, (8, 24)),
+            ("drop3", KICK_TRAP_A, True, BASS_A, (0, 8))]
+    for sec, kicks, heavy, bass, flute_bars in main:
+        n = nbars(sec)
+        place("fx", SND["impact"], bar_time(sec), 1.0 if sec == "drop1" else 0.6)
+        play_cowbell(sec, riff)
+        play_cowbell(sec, riff, gain=0.45, start_bar=n // 2, transpose=12)   # octave lift
+        trap_drums(sec, kicks, heavy)
+        add_808(sec, bass, fill=BASS_FILL)
+        for fb in flute_bars:
+            flute_phrase(sec, fb, 0.55 if sec == "drop1" else 0.75)
+        place("fx", make_reverse_crash(2 * BEAT), section_end(sec) - 2 * BEAT, 0.4)
+    # ---- BREAK (2:15): almost silent - pad, drone, sparse koto, soft flute
+    place("fx", make_downlifter(2 * BAR), bar_time("break"), 0.5)
+    place("fx", SND["impact"], bar_time("break"), 0.45)
+    place("drone", make_drone(nbars("break") * BAR + 1.0), bar_time("break"), 0.5)
+    play_cowbell("break", riff, only_downbeats=True, gain=0.6)
+    flute_phrase("break", 4, 0.45)
+    # ---- BUILD 2 (2:30): the 808 comes back, then kicks, snare roll and riser
+    play_cowbell("build2", riff)
+    for b in range(4):                                     # long sub notes, growing
+        f = ROOT_808 * 2 ** (PROGRESSION[b % 4] / 12)
+        bass_notes.append((bar_time("build2", b), BAR, f, 0.12, None, 0.45 + 0.1 * b))
+    for b in range(4, 7):                                  # 808 pattern + kicks on 1 and 3
+        root = PROGRESSION[b % 4]
+        for k, length, off in BASS_A:
+            bass_notes.append((bar_time("build2", b, k), length * STEP, ROOT_808 * 2 ** ((root + off) / 12), GLIDE, None, 0.8))
+        for k in (0, 8):
+            play_kick("build2", b, k, 0.8)
+    roll_start, end = bar_time("build2", 7), section_end("build2")
+    t = roll_start
+    while t < end - BEAT - 1e-6:                           # snare roll: 16ths then 32nds
+        prog = (t - roll_start) / (end - BEAT - roll_start)
+        place("snare", resample(SND["snare"], 1 + 0.6 * prog), t, 0.3 + 0.7 * prog ** 1.5)
+        place("hats", SND["hat"], t, 0.5 + 0.3 * prog, pan=-0.1)
+        t += STEP if prog < 0.5 else STEP / 2
+    place("fx", make_riser(end - BEAT - bar_time("build2", 4)), bar_time("build2", 4), 0.55)
+    place("fx", make_reverse_crash(BAR), bar_time("drop4") - BAR, 0.5)
+    # ---- DROP 4 (2:46.9): final drop, heaviest
+    place("fx", SND["impact"], bar_time("drop4"), 1.0)
+    play_cowbell("drop4", riff)
+    play_cowbell("drop4", riff, gain=0.45, start_bar=8, transpose=12)
+    trap_drums("drop4", KICK_TRAP_B, heavy=True)
+    add_808("drop4", BASS_B, fill=BASS_FILL)
+    flute_phrase("drop4", 0, 0.8)
+    flute_phrase("drop4", 8, 0.8)
+    # ---- END (3:16.9): final hit with a long diving 808
+    end = section_end("drop4")
+    place("fx", SND["impact"], end, 1.0)
+    place("kick", SND["kick"], end)
+    kick_times.append(end)
+    bass_notes.append((end, 3.0, ROOT_808, DROP_DIVE, 2 * ROOT_808, 1.0))
+    # ---- PAD: one chord per bar of every section (follows each section's grid)
+    for sec, _ in SECTIONS:
+        for b in range(nbars(sec)):
+            t0 = bar_time(sec, b)
+            dur = min(BAR, section_end(sec) - t0)
+            if dur > 0.05:
+                place("pad", make_pad_chord(PAD_CHORDS[b % 4], dur), t0)
+
+
 def arrange():
+    if LAYOUT == "128":
+        return arrange_128()
     # ---- INTRO: opening hit, drone, pad, cowbell behind a closed filter
     place("fx", SND["impact"], 0.0, 0.6)
     place("drone", make_drone(SECTION_START["intro"][1] * BAR + 2.0), 0.0)
@@ -1006,7 +1130,7 @@ def brass_theme(section, start_bar=0, gain=1.0):
 
 
 def brass_stabs(section, steps=(0, 10), gain=1.0):
-    for b in range(SECTION_START[section][1]):
+    for b in range(nbars(section)):
         chord = PAD_CHORDS[b % 4] + [PROGRESSION[b % 4] - 12]
         for k in steps:
             if is_gap(section, b, k):
@@ -1137,6 +1261,27 @@ def section_rms(x, section):
 # =============================================================================
 # MAIN
 # =============================================================================
+def automation_150(t):
+    """Filter and pad automation of the original 150 BPM layout."""
+    cow_open = automation([(0, 0.0), (t["build1"], 0.85), (t["drop1"], 1.0), (t["break"], 0.3),
+                           (t["build2"], 0.35), (t["drop2"], 1.0), (t["outro"], 1.0), (SONG_END - BAR, 0.0), (SONG_END + TAIL, 0.0)])
+    pad_open = automation([(0, 0.0), (t["build1"], 0.6), (t["drop1"], 0.9), (t["drop1"] + BAR, 0.45),
+                           (t["break"], 0.9), (t["build2"], 0.6), (t["drop2"], 0.9), (t["drop2"] + BAR, 0.5),
+                           (t["outro"], 0.5), (SONG_END, 0.0), (SONG_END + TAIL, 0.0)])
+    pad_level = automation([(0, 0.4), (t["build1"], 1.0), (t["drop1"], 0.8), (t["break"], 1.2),
+                            (t["drop2"], 0.8), (t["outro"], 1.0), (SONG_END, 0.0), (SONG_END + TAIL, 0.0)])
+    return cow_open, pad_open, pad_level
+
+
+def widen(x, ms_left, ms_right, amount):
+    """Stereo spread: a short, different delay blended into each side."""
+    out = x.copy()
+    for ch, ms in ((0, ms_left), (1, ms_right)):
+        d = secs(ms / 1000)
+        out[ch, d:] += amount * x[ch, :-d]
+    return out
+
+
 def build_mix():
     """Arranges, renders and mixes the track. Returns (stems, master mix)."""
     arrange()
@@ -1145,13 +1290,16 @@ def build_mix():
 
     # Automation (time s, value): cowbell filter and pad brightness per section
     t = {name: bar_time(name) for name, _ in SECTIONS}
-    cow_open = automation([(0, 0.0), (t["build1"], 0.85), (t["drop1"], 1.0), (t["break"], 0.3),
-                           (t["build2"], 0.35), (t["drop2"], 1.0), (t["outro"], 1.0), (SONG_END - BAR, 0.0), (SONG_END + TAIL, 0.0)])
-    pad_open = automation([(0, 0.0), (t["build1"], 0.6), (t["drop1"], 0.9), (t["drop1"] + BAR, 0.45),
-                           (t["break"], 0.9), (t["build2"], 0.6), (t["drop2"], 0.9), (t["drop2"] + BAR, 0.5),
-                           (t["outro"], 0.5), (SONG_END, 0.0), (SONG_END + TAIL, 0.0)])
-    pad_level = automation([(0, 0.4), (t["build1"], 1.0), (t["drop1"], 0.8), (t["break"], 1.2),
-                            (t["drop2"], 0.8), (t["outro"], 1.0), (SONG_END, 0.0), (SONG_END + TAIL, 0.0)])
+    if LAYOUT == "128":
+        cow_open = automation([(0, 0.0), (t["build1"], 0.7), (t["drop1"], 1.0), (t["break"], 0.3), (t["build2"], 0.4),
+                               (t["drop4"] - 0.01, 0.9), (t["drop4"], 1.0), (SONG_END, 1.0), (SONG_END + TAIL, 0.0)])
+        pad_open = automation([(0, 0.0), (t["build1"], 0.6), (t["drop1"], 0.9), (t["drop1"] + BAR, 0.45),
+                               (t["break"], 0.9), (t["build2"], 0.6), (t["drop4"], 0.9), (t["drop4"] + BAR, 0.5),
+                               (SONG_END, 0.5), (SONG_END + TAIL, 0.0)])
+        pad_level = automation([(0, 0.5), (t["build1"], 1.0), (t["drop1"], 0.8), (t["break"], 1.2),
+                                (t["drop4"], 0.8), (SONG_END, 0.8), (SONG_END + TAIL, 0.0)])
+    else:
+        cow_open, pad_open, pad_level = automation_150(t)
 
     cow = filter_sweep(bus["cowbell"], cow_open, 650, 9000)
     pad = filter_sweep(bus["pad"], pad_open, 500, 2600) * pad_level
@@ -1168,6 +1316,9 @@ def build_mix():
     for name in ("strings", "brass", "choir", "flute"):
         stems[name] = MIX[name] * bus[name] * orch
     stems["perc"] = MIX["perc"] * bus["perc"]
+    if LAYOUT == "128":                    # wider melody layers, like the reference
+        for name in ("cowbell", "flute", "pad"):
+            stems[name] = widen(stems[name], 9, 14, 0.45)
     # Shared stereo hall reverb (returns high-passed so the low end stays clean)
     send = sum(REVERB_SEND.get(k, 0) * v for k, v in stems.items())
     ir_l, ir_r = make_reverb_ir()
@@ -1181,7 +1332,7 @@ def build_mix():
 
     # ---- Master: low cut, mono lows, gain to target, soft clip, limiter
     mix = hp(mix, 28)
-    mid, side = (mix[0] + mix[1]) / 2, hp((mix[0] - mix[1]) / 2, 140)
+    mid, side = (mix[0] + mix[1]) / 2, hp((mix[0] - mix[1]) / 2, 140) * STEREO_WIDTH
     mix = np.stack([mid + side, mid - side])
     gain = 10 ** (TARGET_RMS_DB / 20) / section_rms(mix, "drop1")
     mix *= gain
@@ -1190,7 +1341,7 @@ def build_mix():
     mix = np.sign(mix) * np.where(a < knee, a, knee + (1 - knee) * np.tanh((a - knee) / (1 - knee)))
     ceiling = 10 ** (CEILING_DB / 20)
     mix = np.clip(limiter(mix, ceiling), -ceiling, ceiling)
-    fade = secs(TAIL)
+    fade = secs(TAIL if LAYOUT == "150" else 3.0)
     mix[:, -fade:] *= np.linspace(1, 0, fade) ** 2
     return stems, mix
 
@@ -1198,13 +1349,20 @@ def build_mix():
 def main():
     global THEME, EPIC_THEME, STYLE
     for arg in sys.argv[1:]:
+        if arg == "150":
+            continue                      # layout, read at import time
         if arg in ("trap", "phonk"):
             STYLE = arg
         elif arg in EPIC_THEMES:
             THEME, EPIC_THEME = arg, EPIC_THEMES[arg]
         else:
             sys.exit(f"Unknown option {arg!r}. Use trap or phonk, and for phonk a theme: {', '.join(EPIC_THEMES)}")
-    out = "black_asphalt_trap.wav" if STYLE == "trap" else OUTPUT_FILE
+    if STYLE == "phonk" and LAYOUT == "128":
+        sys.exit("The phonk/orchestral version only exists in the 150 layout: python dark_drift_phonk.py 150 phonk")
+    if STYLE == "trap":
+        out = "black_asphalt_trap.wav" if LAYOUT == "128" else "black_asphalt_trap_150.wav"
+    else:
+        out = OUTPUT_FILE
     print(f"Style: {STYLE}" + (f"  |  epic theme: {THEME}" if STYLE == "phonk" else ""))
     _, mix = build_mix()
     wavfile.write(out, SR, (mix.T * 32767).astype(np.int16))
