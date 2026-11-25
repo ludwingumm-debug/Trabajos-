@@ -153,6 +153,8 @@ EPIC_THEME = EPIC_THEMES[THEME]
 #          melody + flute, no cowbell and no orchestra.
 # "phonk": the drift phonk version with cowbell riffs and the orchestral layer.
 STYLE = "trap"
+# Instrument that plays the main trap riff: "bell", "piano", "guitar" or "pluck".
+MELODY_SOUND = "bell"
 
 
 def _steps(notes, length=64):
@@ -211,7 +213,8 @@ MIX = {
     "cowbell": 1.00, "pad": 0.45, "drone": 0.30, "lead": 0.55, "fx": 0.45,
     "reverb": 0.55, "delay": 0.55,
     "strings": 0.60, "brass": 0.68, "choir": 0.50, "perc": 0.42, "flute": 0.50,
-    "bell": 0.28,               # trap bell (replaces the cowbell level in trap style)
+    "bell": 0.28,               # trap riff level per instrument (replaces the cowbell level)
+    "piano": 0.30, "guitar": 1.10, "pluck": 0.63,
 }
 REVERB_SEND = {"snare": 0.22, "cowbell": 0.16, "pad": 0.30, "lead": 0.40, "fx": 0.45, "hats": 0.04,
                "strings": 0.38, "brass": 0.28, "choir": 0.45, "perc": 0.25, "flute": 0.35}
@@ -528,6 +531,61 @@ def make_bell(semis):
     return fade_tail(norm(np.tanh(1.3 * x)), 0.1)
 
 
+def make_piano(semis):
+    """Dark piano, one octave below the riff: inharmonic partials, two detuned strings, hammer."""
+    f = ROOT_COWBELL / 2 * 2 ** (semis / 12)
+    n = secs(1.8)
+    t = tt(n)
+    x = np.zeros(n)
+    for k in range(1, 13):
+        fk = k * f * np.sqrt(1 + 0.0004 * k * k)          # piano string stiffness
+        if fk > SR * 0.45:
+            break
+        decay = 1.4 / k ** 0.7
+        for d in (-0.4, 0.4):                              # two strings beating (cents)
+            x += np.sin(2 * np.pi * fk * 2 ** (d / 1200) * t) * np.exp(-t / decay) / k ** 1.2
+    x += 0.15 * lp(noise(n), 3000) * np.exp(-t / 0.006)   # hammer
+    x = lp(x, 5000) * np.minimum(1, t / 0.002)
+    return fade_tail(norm(x), 0.15)
+
+
+def make_guitar(semis):
+    """Nylon-style plucked string (Karplus-Strong), one octave below the riff."""
+    f = ROOT_COWBELL / 2 * 2 ** (semis / 12)
+    n = secs(1.6)
+    # Loop delay = N samples + 0.5 (averaging filter) + D (allpass fine tuning)
+    total = SR / f - 0.5
+    N = int(np.floor(total - 0.1))
+    D = total - N
+    c = (1 - D) / (1 + D)
+    burst = np.zeros(n)
+    burst[:N] = lp(noise(N), 4000)
+    g = 0.996                                             # string damping
+    a = np.zeros(N + 3)
+    a[0], a[1] = 1.0, c
+    a[N] -= g / 2 * c
+    a[N + 1] -= g / 2 * (1 + c)
+    a[N + 2] -= g / 2
+    y = signal.lfilter([1.0, c], a, burst)
+    y = lp(hp(y, 90), 4500) * np.exp(-tt(n) / 0.9)
+    return fade_tail(norm(y), 0.15)
+
+
+def make_pluck(semis):
+    """Synth pluck: two detuned saws, filter snapping shut, short decay."""
+    f = ROOT_COWBELL * 2 ** (semis / 12)
+    n = secs(0.9)
+    t = tt(n)
+    x = blep_saw(f * 2 ** (-0.08 / 12), n) + blep_saw(f * 2 ** (0.08 / 12), n, 0.37)
+    snap = np.exp(-t / 0.06)
+    x = snap * lp(x, 6500) + (1 - snap) * lp(x, 700)
+    x *= np.exp(-t / 0.35) * np.minimum(1, t / 0.001)
+    return fade_tail(norm(np.tanh(1.5 * x)), 0.08)
+
+
+MELODY_SYNTHS = {"bell": None, "piano": make_piano, "guitar": make_guitar, "pluck": make_pluck}
+
+
 def make_flute(semis, dur):
     """Breathy trap flute: near-sine tone, delayed vibrato and breath noise."""
     f = ROOT_COWBELL * 2 ** (semis / 12)
@@ -598,9 +656,12 @@ _cow_cache = {}
 
 def cowbell(semis):
     """The main melodic one-shot: the cowbell (phonk) or the dark bell (trap)."""
-    key = (STYLE, semis)
+    key = (STYLE, MELODY_SOUND, semis)
     if key not in _cow_cache:
-        _cow_cache[key] = make_bell(semis) if STYLE == "trap" else make_cowbell(semis)
+        if STYLE == "trap":
+            _cow_cache[key] = (MELODY_SYNTHS.get(MELODY_SOUND) or make_bell)(semis)
+        else:
+            _cow_cache[key] = make_cowbell(semis)
     return _cow_cache[key]
 
 
@@ -1008,7 +1069,7 @@ def build_mix():
 
     stems = {
         "kick": MIX["kick"] * bus["kick"], "snare": MIX["snare"] * bus["snare"], "hats": MIX["hats"] * bus["hats"],
-        "bass": np.stack([bass, bass]), "cowbell": MIX["bell" if STYLE == "trap" else "cowbell"] * cow, "pad": MIX["pad"] * pad,
+        "bass": np.stack([bass, bass]), "cowbell": MIX[MELODY_SOUND if STYLE == "trap" else "cowbell"] * cow, "pad": MIX["pad"] * pad,
         "drone": MIX["drone"] * bus["drone"], "lead": MIX["lead"] * bus["lead"], "fx": MIX["fx"] * bus["fx"],
     }
     orch = sidechain(*SIDECHAIN_ORCH)
