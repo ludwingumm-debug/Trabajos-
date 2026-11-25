@@ -214,7 +214,7 @@ MIX = {
     "reverb": 0.55, "delay": 0.55,
     "strings": 0.60, "brass": 0.68, "choir": 0.50, "perc": 0.42, "flute": 0.50,
     "bell": 0.28,               # trap riff level per instrument (replaces the cowbell level)
-    "piano": 0.30, "guitar": 1.10, "pluck": 0.63, "koto": 1.55,
+    "piano": 0.30, "guitar": 1.10, "pluck": 0.63, "koto": 0.92,
 }
 REVERB_SEND = {"snare": 0.22, "cowbell": 0.16, "pad": 0.30, "lead": 0.40, "fx": 0.45, "hats": 0.04,
                "strings": 0.38, "brass": 0.28, "choir": 0.45, "perc": 0.25, "flute": 0.35}
@@ -584,18 +584,19 @@ def make_guitar(semis):
 
 
 def make_koto(semis):
-    """Koto: bright string plucked near the bridge, shorter ring, a twangy attack
-    and the small pressed-string waver ("oshide") koto players add after the pluck."""
+    """Soft koto: string plucked further from the bridge with a darker, rounder
+    attack, a gentle wooden body and the small pressed-string waver ("oshide")."""
     f = ROOT_COWBELL / 2 * 2 ** (semis / 12)
     n = secs(1.4)
     t = tt(n)
-    y = karplus(f, n, damping=0.993, bright=9000, pluck_pos=0.12)
-    y = hp(y, 120) + 0.25 * hp(y, 2500) * np.exp(-t / 0.04)          # twang
-    y = y + 0.25 * bp(y, 380, 900)                                    # wooden body
+    y = karplus(f, n, damping=0.993, bright=4000, pluck_pos=0.25)
+    y = hp(y, 120) + 0.06 * hp(y, 2500) * np.exp(-t / 0.03)          # just a hint of twang
+    y = y + 0.3 * bp(y, 300, 800)                                     # warm wooden body
+    y = lp(y, 4500)
     waver = 1 + 0.004 * np.sin(2 * np.pi * 5.5 * t) * np.clip((t - 0.18) / 0.25, 0, 1)
     y = np.interp(np.cumsum(waver) - waver[0], np.arange(n), y)       # ~ +/-7 cent waver
-    y *= np.exp(-t / 0.7) * np.minimum(1, t / 0.0005)
-    return fade_tail(norm(np.tanh(1.2 * norm(y))), 0.15)
+    y *= np.exp(-t / 0.7) * np.minimum(1, t / 0.004)                  # softer 4 ms attack
+    return fade_tail(norm(y), 0.15)
 
 
 def make_pluck(semis):
