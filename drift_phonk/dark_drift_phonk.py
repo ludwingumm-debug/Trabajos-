@@ -153,8 +153,8 @@ EPIC_THEME = EPIC_THEMES[THEME]
 #          melody + flute, no cowbell and no orchestra.
 # "phonk": the drift phonk version with cowbell riffs and the orchestral layer.
 STYLE = "trap"
-# Instrument that plays the main trap riff: "bell", "piano", "guitar" or "pluck".
-MELODY_SOUND = "bell"
+# Instrument that plays the main trap riff: "koto", "bell", "piano", "guitar" or "pluck".
+MELODY_SOUND = "koto"
 
 
 def _steps(notes, length=64):
@@ -214,7 +214,7 @@ MIX = {
     "reverb": 0.55, "delay": 0.55,
     "strings": 0.60, "brass": 0.68, "choir": 0.50, "perc": 0.42, "flute": 0.50,
     "bell": 0.28,               # trap riff level per instrument (replaces the cowbell level)
-    "piano": 0.30, "guitar": 1.10, "pluck": 0.63,
+    "piano": 0.30, "guitar": 1.10, "pluck": 0.63, "koto": 1.55,
 }
 REVERB_SEND = {"snare": 0.22, "cowbell": 0.16, "pad": 0.30, "lead": 0.40, "fx": 0.45, "hats": 0.04,
                "strings": 0.38, "brass": 0.28, "choir": 0.45, "perc": 0.25, "flute": 0.35}
@@ -549,26 +549,53 @@ def make_piano(semis):
     return fade_tail(norm(x), 0.15)
 
 
-def make_guitar(semis):
-    """Nylon-style plucked string (Karplus-Strong), one octave below the riff."""
-    f = ROOT_COWBELL / 2 * 2 ** (semis / 12)
-    n = secs(1.6)
-    # Loop delay = N samples + 0.5 (averaging filter) + D (allpass fine tuning)
-    total = SR / f - 0.5
+def karplus(f, n, damping, bright, pluck_pos=0.0):
+    """Plucked string (Karplus-Strong) tuned exactly with an allpass in the loop.
+
+    damping: how long the string rings (closer to 1 = longer)
+    bright:  low-pass of the pluck noise (Hz) - higher = brighter attack
+    pluck_pos: 0..0.5, where the string is plucked (small = near the bridge, twangy)
+    """
+    total = SR / f - 0.5                  # loop = N + 0.5 (averaging) + D (allpass)
     N = int(np.floor(total - 0.1))
     D = total - N
     c = (1 - D) / (1 + D)
-    burst = np.zeros(n)
-    burst[:N] = lp(noise(N), 4000)
-    g = 0.996                                             # string damping
+    burst = lp(noise(N), bright)
+    if pluck_pos:                         # comb notch = pluck position on the string
+        k = max(1, int(pluck_pos * N))
+        burst[k:] -= burst[:-k].copy()
+    exc = np.zeros(n)
+    exc[:N] = burst
     a = np.zeros(N + 3)
     a[0], a[1] = 1.0, c
-    a[N] -= g / 2 * c
-    a[N + 1] -= g / 2 * (1 + c)
-    a[N + 2] -= g / 2
-    y = signal.lfilter([1.0, c], a, burst)
+    a[N] -= damping / 2 * c
+    a[N + 1] -= damping / 2 * (1 + c)
+    a[N + 2] -= damping / 2
+    return signal.lfilter([1.0, c], a, exc)
+
+
+def make_guitar(semis):
+    """Nylon-style plucked string, one octave below the riff."""
+    f = ROOT_COWBELL / 2 * 2 ** (semis / 12)
+    n = secs(1.6)
+    y = karplus(f, n, damping=0.996, bright=4000)
     y = lp(hp(y, 90), 4500) * np.exp(-tt(n) / 0.9)
     return fade_tail(norm(y), 0.15)
+
+
+def make_koto(semis):
+    """Koto: bright string plucked near the bridge, shorter ring, a twangy attack
+    and the small pressed-string waver ("oshide") koto players add after the pluck."""
+    f = ROOT_COWBELL / 2 * 2 ** (semis / 12)
+    n = secs(1.4)
+    t = tt(n)
+    y = karplus(f, n, damping=0.993, bright=9000, pluck_pos=0.12)
+    y = hp(y, 120) + 0.25 * hp(y, 2500) * np.exp(-t / 0.04)          # twang
+    y = y + 0.25 * bp(y, 380, 900)                                    # wooden body
+    waver = 1 + 0.004 * np.sin(2 * np.pi * 5.5 * t) * np.clip((t - 0.18) / 0.25, 0, 1)
+    y = np.interp(np.cumsum(waver) - waver[0], np.arange(n), y)       # ~ +/-7 cent waver
+    y *= np.exp(-t / 0.7) * np.minimum(1, t / 0.0005)
+    return fade_tail(norm(np.tanh(1.2 * norm(y))), 0.15)
 
 
 def make_pluck(semis):
@@ -583,7 +610,7 @@ def make_pluck(semis):
     return fade_tail(norm(np.tanh(1.5 * x)), 0.08)
 
 
-MELODY_SYNTHS = {"bell": None, "piano": make_piano, "guitar": make_guitar, "pluck": make_pluck}
+MELODY_SYNTHS = {"bell": None, "piano": make_piano, "guitar": make_guitar, "pluck": make_pluck, "koto": make_koto}
 
 
 def make_flute(semis, dur):
