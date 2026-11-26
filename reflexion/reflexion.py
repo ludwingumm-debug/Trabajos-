@@ -13,9 +13,15 @@ Estructura (1 compás = 3.43 s):
     0:41   tema B   la melodía sube, entran cuerdas y bajo (momento más emotivo)
     1:09   final    el piano se queda solo y termina en Do mayor
 
+Versión "solo" (python reflexion.py solo): solo piano, más suave y sin que la
+melodía suba tanto (se queda entre La4 y Sol5); sin cuerdas, bajo ni lluvia.
+
 Uso:
     python reflexion.py        -> reflexion.wav
+    python reflexion.py solo   -> reflexion_solo.wav
 """
+
+import sys
 
 import numpy as np
 from scipy import signal
@@ -26,7 +32,8 @@ from scipy.io import wavfile
 # =============================================================================
 SR = 44100
 BPM = 70                        # tempo lento (todo lo demás se calcula a partir de él)
-OUTPUT_FILE = "reflexion.wav"
+SOLO = "solo" in sys.argv[1:]   # versión solo piano, más suave
+OUTPUT_FILE = "reflexion_solo.wav" if SOLO else "reflexion.wav"
 SEED = 7                        # misma semilla = mismo resultado
 TAIL = 7.0                      # segundos para que el último acorde se apague
 
@@ -75,6 +82,22 @@ MELODY_B = [
     (24, 79, 1), (25, 76, 1), (26, 74, 1), (27, 72, 1), # Sol Mi Re Do
     (28, 71, 2), (30, 74, 2),                           # Si Re
 ]
+# Versión solo: el tema B se queda en el mismo registro que el A (máximo Sol5)
+MELODY_B_SOFT = [
+    (0, 76, 2), (2, 74, 1), (3, 72, 1),                 # Mi Re Do
+    (4, 72, 2), (6, 74, 1), (7, 77, 1),                 # Do Re Fa
+    (8, 76, 3), (11, 72, 1),                            # Mi . Do
+    (12, 74, 4),                                        # Re
+    (16, 76, 1.5), (17.5, 77, 0.5), (18, 79, 2),        # Mi Fa Sol (punto más alto, suave)
+    (20, 77, 2), (22, 76, 2),                           # Fa Mi
+    (24, 74, 1), (25, 72, 1), (26, 71, 2),              # Re Do Si
+    (28, 74, 4),                                        # Re
+]
+MELODY_FINAL_SOFT = [
+    (0, 76, 2), (2, 74, 2),                             # Mi Re
+    (4, 72, 4),                                         # Do
+    (12, 72, 4),                                        # Do, sobre el último acorde
+]
 MELODY_FINAL = [
     (0, 76, 2), (2, 74, 2),                             # Mi Re
     (4, 72, 4),                                         # Do
@@ -91,7 +114,7 @@ ARP_HIGH = [0, 2, 3, 4, 5, 4, 3, 2]
 MIX = {"piano": 0.70, "melody": 1.0, "strings": 0.60, "bass": 0.09, "rain": 0.14, "vinyl": 0.05}
 REVERB_SEND = {"piano": 0.35, "melody": 0.40, "strings": 0.55, "bass": 0.0, "rain": 0.10, "vinyl": 0.0}
 HUMANIZE_MS = 8                 # pequeñas variaciones de tiempo, como al tocar en vivo
-TARGET_RMS_DB = -17.0           # volumen medio del tema B (tranquilo, sin aplastar)
+TARGET_RMS_DB = -20.0 if SOLO else -17.0   # volumen medio del tema B (tranquilo, sin aplastar)
 CEILING_DB = -1.0               # pico máximo final
 
 
@@ -296,14 +319,36 @@ def play_arpeggios(section, gain, high=False):
 
 def play_melody(section, melody, gain=1.0):
     t0 = SECTION_START[section] * BAR
+    soft = 0.8 if SOLO else 1.0                                # toque más flojo en la versión solo
     for beat, m, length in melody:
-        phrase = 0.62 + 0.12 * np.sin(np.pi * (beat % 8) / 8)  # cada frase crece y se relaja
+        phrase = soft * (0.62 + 0.12 * np.sin(np.pi * (beat % 8) / 8))  # cada frase crece y se relaja
         vel = round(phrase * rng.uniform(0.94, 1.04), 2)
         # un poco por detrás del pulso: suena relajado
         place("melody", piano_note(m, vel, length * BEAT * 1.05), t0 + beat * BEAT + 0.012 + human(), gain, 0.12)
 
 
+def arrange_solo():
+    """Solo piano: arpegios cerrados y melodía en un registro medio, todo más suave."""
+    play_arpeggios("intro", 0.8)
+    play_arpeggios("tema_a", 0.7)
+    play_melody("tema_a", MELODY_A)
+    play_arpeggios("tema_b", 0.7)
+    play_melody("tema_b", MELODY_B_SOFT)
+    chords = dict(SECTIONS)["final"]
+    for b, name in enumerate(chords[:2]):
+        t = (SECTION_START["final"] + b) * BAR
+        for i, idx in enumerate(ARP_LOW):
+            m = CHORDS[name][idx]
+            place("piano", piano_note(m, 0.27 if i else 0.36, BAR - i * 0.5 * BEAT), t + i * 0.5 * BEAT + human(), 0.7, pitch_pan(m))
+    t_last = (SECTION_START["final"] + 2) * BAR
+    for i, m in enumerate(CHORDS["C"]):                       # acorde roto lento, que se apaga solo
+        place("piano", piano_note(m, 0.33, 2 * BAR + TAIL - 1.5), t_last + i * 0.11, 0.8, pitch_pan(m))
+    play_melody("final", MELODY_FINAL_SOFT, 0.9)
+
+
 def arrange():
+    if SOLO:
+        return arrange_solo()
     # INTRO: arpegios solos
     play_arpeggios("intro", 0.9)
     # TEMA A: melodía sobre los arpegios
